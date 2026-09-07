@@ -101,7 +101,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
   /// 当前 schema 版本（静态访问，用于导入前版本检查）
-  static const currentSchemaVersion = 51;
+  static const currentSchemaVersion = 52;
 
   @override
   int get schemaVersion => currentSchemaVersion;
@@ -141,6 +141,40 @@ class AppDatabase extends _$AppDatabase {
         await _ensurePodcastColumns();
       },
       onUpgrade: (Migrator m, int from, int to) async {
+        // v51→v52：增加整数毫秒字段，保留旧秒字段兼容历史查询。
+        if (from < 52) {
+          for (final table in [
+            'daily_study_records',
+            'daily_stage_study_records',
+          ]) {
+            await _addColumnIfNotExists(
+              table,
+              'study_time_milliseconds',
+              'INTEGER NOT NULL DEFAULT 0',
+            );
+            await _addColumnIfNotExists(
+              table,
+              'input_time_milliseconds',
+              'INTEGER NOT NULL DEFAULT 0',
+            );
+            await _addColumnIfNotExists(
+              table,
+              'output_time_milliseconds',
+              'INTEGER NOT NULL DEFAULT 0',
+            );
+            if (await _tableExists(table)) {
+              await customStatement('''
+                UPDATE $table
+                SET study_time_milliseconds = study_time_seconds * 1000,
+                    input_time_milliseconds = input_time_seconds * 1000,
+                    output_time_milliseconds = output_time_seconds * 1000
+                WHERE study_time_milliseconds = 0
+                  AND input_time_milliseconds = 0
+                  AND output_time_milliseconds = 0
+              ''');
+            }
+          }
+        }
         // v49→v50：为收藏单词/意群补稳定的记忆主体 ID，并把收藏句专属的每日
         // 入队去重表泛化为带 namespace 的通用表，供词汇复习共用同一张表。
         if (from < 50) {

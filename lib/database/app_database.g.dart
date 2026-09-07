@@ -10339,6 +10339,17 @@ class $DailyStudyRecordsTable extends DailyStudyRecords
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _studyTimeMillisecondsMeta =
+      const VerificationMeta('studyTimeMilliseconds');
+  @override
+  late final GeneratedColumn<int> studyTimeMilliseconds = GeneratedColumn<int>(
+    'study_time_milliseconds',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   static const VerificationMeta _inputWordsMeta = const VerificationMeta(
     'inputWords',
   );
@@ -10375,6 +10386,17 @@ class $DailyStudyRecordsTable extends DailyStudyRecords
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _inputTimeMillisecondsMeta =
+      const VerificationMeta('inputTimeMilliseconds');
+  @override
+  late final GeneratedColumn<int> inputTimeMilliseconds = GeneratedColumn<int>(
+    'input_time_milliseconds',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   static const VerificationMeta _outputTimeSecondsMeta = const VerificationMeta(
     'outputTimeSeconds',
   );
@@ -10387,15 +10409,29 @@ class $DailyStudyRecordsTable extends DailyStudyRecords
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _outputTimeMillisecondsMeta =
+      const VerificationMeta('outputTimeMilliseconds');
+  @override
+  late final GeneratedColumn<int> outputTimeMilliseconds = GeneratedColumn<int>(
+    'output_time_milliseconds',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
     date,
     studyTimeSeconds,
+    studyTimeMilliseconds,
     inputWords,
     outputWords,
     inputTimeSeconds,
+    inputTimeMilliseconds,
     outputTimeSeconds,
+    outputTimeMilliseconds,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -10429,6 +10465,15 @@ class $DailyStudyRecordsTable extends DailyStudyRecords
         ),
       );
     }
+    if (data.containsKey('study_time_milliseconds')) {
+      context.handle(
+        _studyTimeMillisecondsMeta,
+        studyTimeMilliseconds.isAcceptableOrUnknown(
+          data['study_time_milliseconds']!,
+          _studyTimeMillisecondsMeta,
+        ),
+      );
+    }
     if (data.containsKey('input_words')) {
       context.handle(
         _inputWordsMeta,
@@ -10453,12 +10498,30 @@ class $DailyStudyRecordsTable extends DailyStudyRecords
         ),
       );
     }
+    if (data.containsKey('input_time_milliseconds')) {
+      context.handle(
+        _inputTimeMillisecondsMeta,
+        inputTimeMilliseconds.isAcceptableOrUnknown(
+          data['input_time_milliseconds']!,
+          _inputTimeMillisecondsMeta,
+        ),
+      );
+    }
     if (data.containsKey('output_time_seconds')) {
       context.handle(
         _outputTimeSecondsMeta,
         outputTimeSeconds.isAcceptableOrUnknown(
           data['output_time_seconds']!,
           _outputTimeSecondsMeta,
+        ),
+      );
+    }
+    if (data.containsKey('output_time_milliseconds')) {
+      context.handle(
+        _outputTimeMillisecondsMeta,
+        outputTimeMilliseconds.isAcceptableOrUnknown(
+          data['output_time_milliseconds']!,
+          _outputTimeMillisecondsMeta,
         ),
       );
     }
@@ -10483,6 +10546,10 @@ class $DailyStudyRecordsTable extends DailyStudyRecords
         DriftSqlType.int,
         data['${effectivePrefix}study_time_seconds'],
       )!,
+      studyTimeMilliseconds: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}study_time_milliseconds'],
+      )!,
       inputWords: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}input_words'],
@@ -10495,9 +10562,17 @@ class $DailyStudyRecordsTable extends DailyStudyRecords
         DriftSqlType.int,
         data['${effectivePrefix}input_time_seconds'],
       )!,
+      inputTimeMilliseconds: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}input_time_milliseconds'],
+      )!,
       outputTimeSeconds: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}output_time_seconds'],
+      )!,
+      outputTimeMilliseconds: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}output_time_milliseconds'],
       )!,
     );
   }
@@ -10519,6 +10594,9 @@ class DailyStudyRecord extends DataClass
   /// 当日累计学习时长（秒）
   final int studyTimeSeconds;
 
+  /// 当日累计学习时长（毫秒）；新统计写入的真实精度来源。
+  final int studyTimeMilliseconds;
+
   /// 当日输入词数（听了多少词）
   final int inputWords;
 
@@ -10528,16 +10606,25 @@ class DailyStudyRecord extends DataClass
   /// 当日输入时间（秒）— 音频播放时间
   final int inputTimeSeconds;
 
+  /// 当日累计输入时间（毫秒）。
+  final int inputTimeMilliseconds;
+
   /// 当日输出时间（秒）— 跟读/复述暂停时间
   final int outputTimeSeconds;
+
+  /// 当日累计输出时间（毫秒）。
+  final int outputTimeMilliseconds;
   const DailyStudyRecord({
     required this.id,
     required this.date,
     required this.studyTimeSeconds,
+    required this.studyTimeMilliseconds,
     required this.inputWords,
     required this.outputWords,
     required this.inputTimeSeconds,
+    required this.inputTimeMilliseconds,
     required this.outputTimeSeconds,
+    required this.outputTimeMilliseconds,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -10545,10 +10632,13 @@ class DailyStudyRecord extends DataClass
     map['id'] = Variable<int>(id);
     map['date'] = Variable<DateTime>(date);
     map['study_time_seconds'] = Variable<int>(studyTimeSeconds);
+    map['study_time_milliseconds'] = Variable<int>(studyTimeMilliseconds);
     map['input_words'] = Variable<int>(inputWords);
     map['output_words'] = Variable<int>(outputWords);
     map['input_time_seconds'] = Variable<int>(inputTimeSeconds);
+    map['input_time_milliseconds'] = Variable<int>(inputTimeMilliseconds);
     map['output_time_seconds'] = Variable<int>(outputTimeSeconds);
+    map['output_time_milliseconds'] = Variable<int>(outputTimeMilliseconds);
     return map;
   }
 
@@ -10557,10 +10647,13 @@ class DailyStudyRecord extends DataClass
       id: Value(id),
       date: Value(date),
       studyTimeSeconds: Value(studyTimeSeconds),
+      studyTimeMilliseconds: Value(studyTimeMilliseconds),
       inputWords: Value(inputWords),
       outputWords: Value(outputWords),
       inputTimeSeconds: Value(inputTimeSeconds),
+      inputTimeMilliseconds: Value(inputTimeMilliseconds),
       outputTimeSeconds: Value(outputTimeSeconds),
+      outputTimeMilliseconds: Value(outputTimeMilliseconds),
     );
   }
 
@@ -10573,10 +10666,19 @@ class DailyStudyRecord extends DataClass
       id: serializer.fromJson<int>(json['id']),
       date: serializer.fromJson<DateTime>(json['date']),
       studyTimeSeconds: serializer.fromJson<int>(json['studyTimeSeconds']),
+      studyTimeMilliseconds: serializer.fromJson<int>(
+        json['studyTimeMilliseconds'],
+      ),
       inputWords: serializer.fromJson<int>(json['inputWords']),
       outputWords: serializer.fromJson<int>(json['outputWords']),
       inputTimeSeconds: serializer.fromJson<int>(json['inputTimeSeconds']),
+      inputTimeMilliseconds: serializer.fromJson<int>(
+        json['inputTimeMilliseconds'],
+      ),
       outputTimeSeconds: serializer.fromJson<int>(json['outputTimeSeconds']),
+      outputTimeMilliseconds: serializer.fromJson<int>(
+        json['outputTimeMilliseconds'],
+      ),
     );
   }
   @override
@@ -10586,10 +10688,13 @@ class DailyStudyRecord extends DataClass
       'id': serializer.toJson<int>(id),
       'date': serializer.toJson<DateTime>(date),
       'studyTimeSeconds': serializer.toJson<int>(studyTimeSeconds),
+      'studyTimeMilliseconds': serializer.toJson<int>(studyTimeMilliseconds),
       'inputWords': serializer.toJson<int>(inputWords),
       'outputWords': serializer.toJson<int>(outputWords),
       'inputTimeSeconds': serializer.toJson<int>(inputTimeSeconds),
+      'inputTimeMilliseconds': serializer.toJson<int>(inputTimeMilliseconds),
       'outputTimeSeconds': serializer.toJson<int>(outputTimeSeconds),
+      'outputTimeMilliseconds': serializer.toJson<int>(outputTimeMilliseconds),
     };
   }
 
@@ -10597,18 +10702,25 @@ class DailyStudyRecord extends DataClass
     int? id,
     DateTime? date,
     int? studyTimeSeconds,
+    int? studyTimeMilliseconds,
     int? inputWords,
     int? outputWords,
     int? inputTimeSeconds,
+    int? inputTimeMilliseconds,
     int? outputTimeSeconds,
+    int? outputTimeMilliseconds,
   }) => DailyStudyRecord(
     id: id ?? this.id,
     date: date ?? this.date,
     studyTimeSeconds: studyTimeSeconds ?? this.studyTimeSeconds,
+    studyTimeMilliseconds: studyTimeMilliseconds ?? this.studyTimeMilliseconds,
     inputWords: inputWords ?? this.inputWords,
     outputWords: outputWords ?? this.outputWords,
     inputTimeSeconds: inputTimeSeconds ?? this.inputTimeSeconds,
+    inputTimeMilliseconds: inputTimeMilliseconds ?? this.inputTimeMilliseconds,
     outputTimeSeconds: outputTimeSeconds ?? this.outputTimeSeconds,
+    outputTimeMilliseconds:
+        outputTimeMilliseconds ?? this.outputTimeMilliseconds,
   );
   DailyStudyRecord copyWithCompanion(DailyStudyRecordsCompanion data) {
     return DailyStudyRecord(
@@ -10617,6 +10729,9 @@ class DailyStudyRecord extends DataClass
       studyTimeSeconds: data.studyTimeSeconds.present
           ? data.studyTimeSeconds.value
           : this.studyTimeSeconds,
+      studyTimeMilliseconds: data.studyTimeMilliseconds.present
+          ? data.studyTimeMilliseconds.value
+          : this.studyTimeMilliseconds,
       inputWords: data.inputWords.present
           ? data.inputWords.value
           : this.inputWords,
@@ -10626,9 +10741,15 @@ class DailyStudyRecord extends DataClass
       inputTimeSeconds: data.inputTimeSeconds.present
           ? data.inputTimeSeconds.value
           : this.inputTimeSeconds,
+      inputTimeMilliseconds: data.inputTimeMilliseconds.present
+          ? data.inputTimeMilliseconds.value
+          : this.inputTimeMilliseconds,
       outputTimeSeconds: data.outputTimeSeconds.present
           ? data.outputTimeSeconds.value
           : this.outputTimeSeconds,
+      outputTimeMilliseconds: data.outputTimeMilliseconds.present
+          ? data.outputTimeMilliseconds.value
+          : this.outputTimeMilliseconds,
     );
   }
 
@@ -10638,10 +10759,13 @@ class DailyStudyRecord extends DataClass
           ..write('id: $id, ')
           ..write('date: $date, ')
           ..write('studyTimeSeconds: $studyTimeSeconds, ')
+          ..write('studyTimeMilliseconds: $studyTimeMilliseconds, ')
           ..write('inputWords: $inputWords, ')
           ..write('outputWords: $outputWords, ')
           ..write('inputTimeSeconds: $inputTimeSeconds, ')
-          ..write('outputTimeSeconds: $outputTimeSeconds')
+          ..write('inputTimeMilliseconds: $inputTimeMilliseconds, ')
+          ..write('outputTimeSeconds: $outputTimeSeconds, ')
+          ..write('outputTimeMilliseconds: $outputTimeMilliseconds')
           ..write(')'))
         .toString();
   }
@@ -10651,10 +10775,13 @@ class DailyStudyRecord extends DataClass
     id,
     date,
     studyTimeSeconds,
+    studyTimeMilliseconds,
     inputWords,
     outputWords,
     inputTimeSeconds,
+    inputTimeMilliseconds,
     outputTimeSeconds,
+    outputTimeMilliseconds,
   );
   @override
   bool operator ==(Object other) =>
@@ -10663,55 +10790,76 @@ class DailyStudyRecord extends DataClass
           other.id == this.id &&
           other.date == this.date &&
           other.studyTimeSeconds == this.studyTimeSeconds &&
+          other.studyTimeMilliseconds == this.studyTimeMilliseconds &&
           other.inputWords == this.inputWords &&
           other.outputWords == this.outputWords &&
           other.inputTimeSeconds == this.inputTimeSeconds &&
-          other.outputTimeSeconds == this.outputTimeSeconds);
+          other.inputTimeMilliseconds == this.inputTimeMilliseconds &&
+          other.outputTimeSeconds == this.outputTimeSeconds &&
+          other.outputTimeMilliseconds == this.outputTimeMilliseconds);
 }
 
 class DailyStudyRecordsCompanion extends UpdateCompanion<DailyStudyRecord> {
   final Value<int> id;
   final Value<DateTime> date;
   final Value<int> studyTimeSeconds;
+  final Value<int> studyTimeMilliseconds;
   final Value<int> inputWords;
   final Value<int> outputWords;
   final Value<int> inputTimeSeconds;
+  final Value<int> inputTimeMilliseconds;
   final Value<int> outputTimeSeconds;
+  final Value<int> outputTimeMilliseconds;
   const DailyStudyRecordsCompanion({
     this.id = const Value.absent(),
     this.date = const Value.absent(),
     this.studyTimeSeconds = const Value.absent(),
+    this.studyTimeMilliseconds = const Value.absent(),
     this.inputWords = const Value.absent(),
     this.outputWords = const Value.absent(),
     this.inputTimeSeconds = const Value.absent(),
+    this.inputTimeMilliseconds = const Value.absent(),
     this.outputTimeSeconds = const Value.absent(),
+    this.outputTimeMilliseconds = const Value.absent(),
   });
   DailyStudyRecordsCompanion.insert({
     this.id = const Value.absent(),
     required DateTime date,
     this.studyTimeSeconds = const Value.absent(),
+    this.studyTimeMilliseconds = const Value.absent(),
     this.inputWords = const Value.absent(),
     this.outputWords = const Value.absent(),
     this.inputTimeSeconds = const Value.absent(),
+    this.inputTimeMilliseconds = const Value.absent(),
     this.outputTimeSeconds = const Value.absent(),
+    this.outputTimeMilliseconds = const Value.absent(),
   }) : date = Value(date);
   static Insertable<DailyStudyRecord> custom({
     Expression<int>? id,
     Expression<DateTime>? date,
     Expression<int>? studyTimeSeconds,
+    Expression<int>? studyTimeMilliseconds,
     Expression<int>? inputWords,
     Expression<int>? outputWords,
     Expression<int>? inputTimeSeconds,
+    Expression<int>? inputTimeMilliseconds,
     Expression<int>? outputTimeSeconds,
+    Expression<int>? outputTimeMilliseconds,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
       if (date != null) 'date': date,
       if (studyTimeSeconds != null) 'study_time_seconds': studyTimeSeconds,
+      if (studyTimeMilliseconds != null)
+        'study_time_milliseconds': studyTimeMilliseconds,
       if (inputWords != null) 'input_words': inputWords,
       if (outputWords != null) 'output_words': outputWords,
       if (inputTimeSeconds != null) 'input_time_seconds': inputTimeSeconds,
+      if (inputTimeMilliseconds != null)
+        'input_time_milliseconds': inputTimeMilliseconds,
       if (outputTimeSeconds != null) 'output_time_seconds': outputTimeSeconds,
+      if (outputTimeMilliseconds != null)
+        'output_time_milliseconds': outputTimeMilliseconds,
     });
   }
 
@@ -10719,19 +10867,28 @@ class DailyStudyRecordsCompanion extends UpdateCompanion<DailyStudyRecord> {
     Value<int>? id,
     Value<DateTime>? date,
     Value<int>? studyTimeSeconds,
+    Value<int>? studyTimeMilliseconds,
     Value<int>? inputWords,
     Value<int>? outputWords,
     Value<int>? inputTimeSeconds,
+    Value<int>? inputTimeMilliseconds,
     Value<int>? outputTimeSeconds,
+    Value<int>? outputTimeMilliseconds,
   }) {
     return DailyStudyRecordsCompanion(
       id: id ?? this.id,
       date: date ?? this.date,
       studyTimeSeconds: studyTimeSeconds ?? this.studyTimeSeconds,
+      studyTimeMilliseconds:
+          studyTimeMilliseconds ?? this.studyTimeMilliseconds,
       inputWords: inputWords ?? this.inputWords,
       outputWords: outputWords ?? this.outputWords,
       inputTimeSeconds: inputTimeSeconds ?? this.inputTimeSeconds,
+      inputTimeMilliseconds:
+          inputTimeMilliseconds ?? this.inputTimeMilliseconds,
       outputTimeSeconds: outputTimeSeconds ?? this.outputTimeSeconds,
+      outputTimeMilliseconds:
+          outputTimeMilliseconds ?? this.outputTimeMilliseconds,
     );
   }
 
@@ -10747,6 +10904,11 @@ class DailyStudyRecordsCompanion extends UpdateCompanion<DailyStudyRecord> {
     if (studyTimeSeconds.present) {
       map['study_time_seconds'] = Variable<int>(studyTimeSeconds.value);
     }
+    if (studyTimeMilliseconds.present) {
+      map['study_time_milliseconds'] = Variable<int>(
+        studyTimeMilliseconds.value,
+      );
+    }
     if (inputWords.present) {
       map['input_words'] = Variable<int>(inputWords.value);
     }
@@ -10756,8 +10918,18 @@ class DailyStudyRecordsCompanion extends UpdateCompanion<DailyStudyRecord> {
     if (inputTimeSeconds.present) {
       map['input_time_seconds'] = Variable<int>(inputTimeSeconds.value);
     }
+    if (inputTimeMilliseconds.present) {
+      map['input_time_milliseconds'] = Variable<int>(
+        inputTimeMilliseconds.value,
+      );
+    }
     if (outputTimeSeconds.present) {
       map['output_time_seconds'] = Variable<int>(outputTimeSeconds.value);
+    }
+    if (outputTimeMilliseconds.present) {
+      map['output_time_milliseconds'] = Variable<int>(
+        outputTimeMilliseconds.value,
+      );
     }
     return map;
   }
@@ -10768,10 +10940,13 @@ class DailyStudyRecordsCompanion extends UpdateCompanion<DailyStudyRecord> {
           ..write('id: $id, ')
           ..write('date: $date, ')
           ..write('studyTimeSeconds: $studyTimeSeconds, ')
+          ..write('studyTimeMilliseconds: $studyTimeMilliseconds, ')
           ..write('inputWords: $inputWords, ')
           ..write('outputWords: $outputWords, ')
           ..write('inputTimeSeconds: $inputTimeSeconds, ')
-          ..write('outputTimeSeconds: $outputTimeSeconds')
+          ..write('inputTimeMilliseconds: $inputTimeMilliseconds, ')
+          ..write('outputTimeSeconds: $outputTimeSeconds, ')
+          ..write('outputTimeMilliseconds: $outputTimeMilliseconds')
           ..write(')'))
         .toString();
   }
@@ -10826,12 +11001,34 @@ class $DailyStageStudyRecordsTable extends DailyStageStudyRecords
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _studyTimeMillisecondsMeta =
+      const VerificationMeta('studyTimeMilliseconds');
+  @override
+  late final GeneratedColumn<int> studyTimeMilliseconds = GeneratedColumn<int>(
+    'study_time_milliseconds',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   static const VerificationMeta _inputTimeSecondsMeta = const VerificationMeta(
     'inputTimeSeconds',
   );
   @override
   late final GeneratedColumn<int> inputTimeSeconds = GeneratedColumn<int>(
     'input_time_seconds',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _inputTimeMillisecondsMeta =
+      const VerificationMeta('inputTimeMilliseconds');
+  @override
+  late final GeneratedColumn<int> inputTimeMilliseconds = GeneratedColumn<int>(
+    'input_time_milliseconds',
     aliasedName,
     false,
     type: DriftSqlType.int,
@@ -10850,14 +11047,28 @@ class $DailyStageStudyRecordsTable extends DailyStageStudyRecords
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _outputTimeMillisecondsMeta =
+      const VerificationMeta('outputTimeMilliseconds');
+  @override
+  late final GeneratedColumn<int> outputTimeMilliseconds = GeneratedColumn<int>(
+    'output_time_milliseconds',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
     date,
     stage,
     studyTimeSeconds,
+    studyTimeMilliseconds,
     inputTimeSeconds,
+    inputTimeMilliseconds,
     outputTimeSeconds,
+    outputTimeMilliseconds,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -10891,6 +11102,15 @@ class $DailyStageStudyRecordsTable extends DailyStageStudyRecords
         ),
       );
     }
+    if (data.containsKey('study_time_milliseconds')) {
+      context.handle(
+        _studyTimeMillisecondsMeta,
+        studyTimeMilliseconds.isAcceptableOrUnknown(
+          data['study_time_milliseconds']!,
+          _studyTimeMillisecondsMeta,
+        ),
+      );
+    }
     if (data.containsKey('input_time_seconds')) {
       context.handle(
         _inputTimeSecondsMeta,
@@ -10900,12 +11120,30 @@ class $DailyStageStudyRecordsTable extends DailyStageStudyRecords
         ),
       );
     }
+    if (data.containsKey('input_time_milliseconds')) {
+      context.handle(
+        _inputTimeMillisecondsMeta,
+        inputTimeMilliseconds.isAcceptableOrUnknown(
+          data['input_time_milliseconds']!,
+          _inputTimeMillisecondsMeta,
+        ),
+      );
+    }
     if (data.containsKey('output_time_seconds')) {
       context.handle(
         _outputTimeSecondsMeta,
         outputTimeSeconds.isAcceptableOrUnknown(
           data['output_time_seconds']!,
           _outputTimeSecondsMeta,
+        ),
+      );
+    }
+    if (data.containsKey('output_time_milliseconds')) {
+      context.handle(
+        _outputTimeMillisecondsMeta,
+        outputTimeMilliseconds.isAcceptableOrUnknown(
+          data['output_time_milliseconds']!,
+          _outputTimeMillisecondsMeta,
         ),
       );
     }
@@ -10940,13 +11178,25 @@ class $DailyStageStudyRecordsTable extends DailyStageStudyRecords
         DriftSqlType.int,
         data['${effectivePrefix}study_time_seconds'],
       )!,
+      studyTimeMilliseconds: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}study_time_milliseconds'],
+      )!,
       inputTimeSeconds: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}input_time_seconds'],
       )!,
+      inputTimeMilliseconds: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}input_time_milliseconds'],
+      )!,
       outputTimeSeconds: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}output_time_seconds'],
+      )!,
+      outputTimeMilliseconds: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}output_time_milliseconds'],
       )!,
     );
   }
@@ -10974,18 +11224,30 @@ class DailyStageStudyRecord extends DataClass
   /// 当日该阶段累计学习时长（秒）
   final int studyTimeSeconds;
 
+  /// 当日该阶段累计学习时长（毫秒）。
+  final int studyTimeMilliseconds;
+
   /// 当日该阶段输入时间（秒）— 音频播放时间
   final int inputTimeSeconds;
 
+  /// 当日该阶段累计输入时间（毫秒）。
+  final int inputTimeMilliseconds;
+
   /// 当日该阶段输出时间（秒）— 跟读/复述时间
   final int outputTimeSeconds;
+
+  /// 当日该阶段累计输出时间（毫秒）。
+  final int outputTimeMilliseconds;
   const DailyStageStudyRecord({
     required this.id,
     required this.date,
     required this.stage,
     required this.studyTimeSeconds,
+    required this.studyTimeMilliseconds,
     required this.inputTimeSeconds,
+    required this.inputTimeMilliseconds,
     required this.outputTimeSeconds,
+    required this.outputTimeMilliseconds,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -10998,8 +11260,11 @@ class DailyStageStudyRecord extends DataClass
       );
     }
     map['study_time_seconds'] = Variable<int>(studyTimeSeconds);
+    map['study_time_milliseconds'] = Variable<int>(studyTimeMilliseconds);
     map['input_time_seconds'] = Variable<int>(inputTimeSeconds);
+    map['input_time_milliseconds'] = Variable<int>(inputTimeMilliseconds);
     map['output_time_seconds'] = Variable<int>(outputTimeSeconds);
+    map['output_time_milliseconds'] = Variable<int>(outputTimeMilliseconds);
     return map;
   }
 
@@ -11009,8 +11274,11 @@ class DailyStageStudyRecord extends DataClass
       date: Value(date),
       stage: Value(stage),
       studyTimeSeconds: Value(studyTimeSeconds),
+      studyTimeMilliseconds: Value(studyTimeMilliseconds),
       inputTimeSeconds: Value(inputTimeSeconds),
+      inputTimeMilliseconds: Value(inputTimeMilliseconds),
       outputTimeSeconds: Value(outputTimeSeconds),
+      outputTimeMilliseconds: Value(outputTimeMilliseconds),
     );
   }
 
@@ -11026,8 +11294,17 @@ class DailyStageStudyRecord extends DataClass
         serializer.fromJson<int>(json['stage']),
       ),
       studyTimeSeconds: serializer.fromJson<int>(json['studyTimeSeconds']),
+      studyTimeMilliseconds: serializer.fromJson<int>(
+        json['studyTimeMilliseconds'],
+      ),
       inputTimeSeconds: serializer.fromJson<int>(json['inputTimeSeconds']),
+      inputTimeMilliseconds: serializer.fromJson<int>(
+        json['inputTimeMilliseconds'],
+      ),
       outputTimeSeconds: serializer.fromJson<int>(json['outputTimeSeconds']),
+      outputTimeMilliseconds: serializer.fromJson<int>(
+        json['outputTimeMilliseconds'],
+      ),
     );
   }
   @override
@@ -11040,8 +11317,11 @@ class DailyStageStudyRecord extends DataClass
         $DailyStageStudyRecordsTable.$converterstage.toJson(stage),
       ),
       'studyTimeSeconds': serializer.toJson<int>(studyTimeSeconds),
+      'studyTimeMilliseconds': serializer.toJson<int>(studyTimeMilliseconds),
       'inputTimeSeconds': serializer.toJson<int>(inputTimeSeconds),
+      'inputTimeMilliseconds': serializer.toJson<int>(inputTimeMilliseconds),
       'outputTimeSeconds': serializer.toJson<int>(outputTimeSeconds),
+      'outputTimeMilliseconds': serializer.toJson<int>(outputTimeMilliseconds),
     };
   }
 
@@ -11050,15 +11330,22 @@ class DailyStageStudyRecord extends DataClass
     DateTime? date,
     StudyStage? stage,
     int? studyTimeSeconds,
+    int? studyTimeMilliseconds,
     int? inputTimeSeconds,
+    int? inputTimeMilliseconds,
     int? outputTimeSeconds,
+    int? outputTimeMilliseconds,
   }) => DailyStageStudyRecord(
     id: id ?? this.id,
     date: date ?? this.date,
     stage: stage ?? this.stage,
     studyTimeSeconds: studyTimeSeconds ?? this.studyTimeSeconds,
+    studyTimeMilliseconds: studyTimeMilliseconds ?? this.studyTimeMilliseconds,
     inputTimeSeconds: inputTimeSeconds ?? this.inputTimeSeconds,
+    inputTimeMilliseconds: inputTimeMilliseconds ?? this.inputTimeMilliseconds,
     outputTimeSeconds: outputTimeSeconds ?? this.outputTimeSeconds,
+    outputTimeMilliseconds:
+        outputTimeMilliseconds ?? this.outputTimeMilliseconds,
   );
   DailyStageStudyRecord copyWithCompanion(
     DailyStageStudyRecordsCompanion data,
@@ -11070,12 +11357,21 @@ class DailyStageStudyRecord extends DataClass
       studyTimeSeconds: data.studyTimeSeconds.present
           ? data.studyTimeSeconds.value
           : this.studyTimeSeconds,
+      studyTimeMilliseconds: data.studyTimeMilliseconds.present
+          ? data.studyTimeMilliseconds.value
+          : this.studyTimeMilliseconds,
       inputTimeSeconds: data.inputTimeSeconds.present
           ? data.inputTimeSeconds.value
           : this.inputTimeSeconds,
+      inputTimeMilliseconds: data.inputTimeMilliseconds.present
+          ? data.inputTimeMilliseconds.value
+          : this.inputTimeMilliseconds,
       outputTimeSeconds: data.outputTimeSeconds.present
           ? data.outputTimeSeconds.value
           : this.outputTimeSeconds,
+      outputTimeMilliseconds: data.outputTimeMilliseconds.present
+          ? data.outputTimeMilliseconds.value
+          : this.outputTimeMilliseconds,
     );
   }
 
@@ -11086,8 +11382,11 @@ class DailyStageStudyRecord extends DataClass
           ..write('date: $date, ')
           ..write('stage: $stage, ')
           ..write('studyTimeSeconds: $studyTimeSeconds, ')
+          ..write('studyTimeMilliseconds: $studyTimeMilliseconds, ')
           ..write('inputTimeSeconds: $inputTimeSeconds, ')
-          ..write('outputTimeSeconds: $outputTimeSeconds')
+          ..write('inputTimeMilliseconds: $inputTimeMilliseconds, ')
+          ..write('outputTimeSeconds: $outputTimeSeconds, ')
+          ..write('outputTimeMilliseconds: $outputTimeMilliseconds')
           ..write(')'))
         .toString();
   }
@@ -11098,8 +11397,11 @@ class DailyStageStudyRecord extends DataClass
     date,
     stage,
     studyTimeSeconds,
+    studyTimeMilliseconds,
     inputTimeSeconds,
+    inputTimeMilliseconds,
     outputTimeSeconds,
+    outputTimeMilliseconds,
   );
   @override
   bool operator ==(Object other) =>
@@ -11109,8 +11411,11 @@ class DailyStageStudyRecord extends DataClass
           other.date == this.date &&
           other.stage == this.stage &&
           other.studyTimeSeconds == this.studyTimeSeconds &&
+          other.studyTimeMilliseconds == this.studyTimeMilliseconds &&
           other.inputTimeSeconds == this.inputTimeSeconds &&
-          other.outputTimeSeconds == this.outputTimeSeconds);
+          other.inputTimeMilliseconds == this.inputTimeMilliseconds &&
+          other.outputTimeSeconds == this.outputTimeSeconds &&
+          other.outputTimeMilliseconds == this.outputTimeMilliseconds);
 }
 
 class DailyStageStudyRecordsCompanion
@@ -11119,23 +11424,32 @@ class DailyStageStudyRecordsCompanion
   final Value<DateTime> date;
   final Value<StudyStage> stage;
   final Value<int> studyTimeSeconds;
+  final Value<int> studyTimeMilliseconds;
   final Value<int> inputTimeSeconds;
+  final Value<int> inputTimeMilliseconds;
   final Value<int> outputTimeSeconds;
+  final Value<int> outputTimeMilliseconds;
   const DailyStageStudyRecordsCompanion({
     this.id = const Value.absent(),
     this.date = const Value.absent(),
     this.stage = const Value.absent(),
     this.studyTimeSeconds = const Value.absent(),
+    this.studyTimeMilliseconds = const Value.absent(),
     this.inputTimeSeconds = const Value.absent(),
+    this.inputTimeMilliseconds = const Value.absent(),
     this.outputTimeSeconds = const Value.absent(),
+    this.outputTimeMilliseconds = const Value.absent(),
   });
   DailyStageStudyRecordsCompanion.insert({
     this.id = const Value.absent(),
     required DateTime date,
     required StudyStage stage,
     this.studyTimeSeconds = const Value.absent(),
+    this.studyTimeMilliseconds = const Value.absent(),
     this.inputTimeSeconds = const Value.absent(),
+    this.inputTimeMilliseconds = const Value.absent(),
     this.outputTimeSeconds = const Value.absent(),
+    this.outputTimeMilliseconds = const Value.absent(),
   }) : date = Value(date),
        stage = Value(stage);
   static Insertable<DailyStageStudyRecord> custom({
@@ -11143,16 +11457,25 @@ class DailyStageStudyRecordsCompanion
     Expression<DateTime>? date,
     Expression<int>? stage,
     Expression<int>? studyTimeSeconds,
+    Expression<int>? studyTimeMilliseconds,
     Expression<int>? inputTimeSeconds,
+    Expression<int>? inputTimeMilliseconds,
     Expression<int>? outputTimeSeconds,
+    Expression<int>? outputTimeMilliseconds,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
       if (date != null) 'date': date,
       if (stage != null) 'stage': stage,
       if (studyTimeSeconds != null) 'study_time_seconds': studyTimeSeconds,
+      if (studyTimeMilliseconds != null)
+        'study_time_milliseconds': studyTimeMilliseconds,
       if (inputTimeSeconds != null) 'input_time_seconds': inputTimeSeconds,
+      if (inputTimeMilliseconds != null)
+        'input_time_milliseconds': inputTimeMilliseconds,
       if (outputTimeSeconds != null) 'output_time_seconds': outputTimeSeconds,
+      if (outputTimeMilliseconds != null)
+        'output_time_milliseconds': outputTimeMilliseconds,
     });
   }
 
@@ -11161,16 +11484,25 @@ class DailyStageStudyRecordsCompanion
     Value<DateTime>? date,
     Value<StudyStage>? stage,
     Value<int>? studyTimeSeconds,
+    Value<int>? studyTimeMilliseconds,
     Value<int>? inputTimeSeconds,
+    Value<int>? inputTimeMilliseconds,
     Value<int>? outputTimeSeconds,
+    Value<int>? outputTimeMilliseconds,
   }) {
     return DailyStageStudyRecordsCompanion(
       id: id ?? this.id,
       date: date ?? this.date,
       stage: stage ?? this.stage,
       studyTimeSeconds: studyTimeSeconds ?? this.studyTimeSeconds,
+      studyTimeMilliseconds:
+          studyTimeMilliseconds ?? this.studyTimeMilliseconds,
       inputTimeSeconds: inputTimeSeconds ?? this.inputTimeSeconds,
+      inputTimeMilliseconds:
+          inputTimeMilliseconds ?? this.inputTimeMilliseconds,
       outputTimeSeconds: outputTimeSeconds ?? this.outputTimeSeconds,
+      outputTimeMilliseconds:
+          outputTimeMilliseconds ?? this.outputTimeMilliseconds,
     );
   }
 
@@ -11191,11 +11523,26 @@ class DailyStageStudyRecordsCompanion
     if (studyTimeSeconds.present) {
       map['study_time_seconds'] = Variable<int>(studyTimeSeconds.value);
     }
+    if (studyTimeMilliseconds.present) {
+      map['study_time_milliseconds'] = Variable<int>(
+        studyTimeMilliseconds.value,
+      );
+    }
     if (inputTimeSeconds.present) {
       map['input_time_seconds'] = Variable<int>(inputTimeSeconds.value);
     }
+    if (inputTimeMilliseconds.present) {
+      map['input_time_milliseconds'] = Variable<int>(
+        inputTimeMilliseconds.value,
+      );
+    }
     if (outputTimeSeconds.present) {
       map['output_time_seconds'] = Variable<int>(outputTimeSeconds.value);
+    }
+    if (outputTimeMilliseconds.present) {
+      map['output_time_milliseconds'] = Variable<int>(
+        outputTimeMilliseconds.value,
+      );
     }
     return map;
   }
@@ -11207,8 +11554,11 @@ class DailyStageStudyRecordsCompanion
           ..write('date: $date, ')
           ..write('stage: $stage, ')
           ..write('studyTimeSeconds: $studyTimeSeconds, ')
+          ..write('studyTimeMilliseconds: $studyTimeMilliseconds, ')
           ..write('inputTimeSeconds: $inputTimeSeconds, ')
-          ..write('outputTimeSeconds: $outputTimeSeconds')
+          ..write('inputTimeMilliseconds: $inputTimeMilliseconds, ')
+          ..write('outputTimeSeconds: $outputTimeSeconds, ')
+          ..write('outputTimeMilliseconds: $outputTimeMilliseconds')
           ..write(')'))
         .toString();
   }
@@ -21322,20 +21672,26 @@ typedef $$DailyStudyRecordsTableCreateCompanionBuilder =
       Value<int> id,
       required DateTime date,
       Value<int> studyTimeSeconds,
+      Value<int> studyTimeMilliseconds,
       Value<int> inputWords,
       Value<int> outputWords,
       Value<int> inputTimeSeconds,
+      Value<int> inputTimeMilliseconds,
       Value<int> outputTimeSeconds,
+      Value<int> outputTimeMilliseconds,
     });
 typedef $$DailyStudyRecordsTableUpdateCompanionBuilder =
     DailyStudyRecordsCompanion Function({
       Value<int> id,
       Value<DateTime> date,
       Value<int> studyTimeSeconds,
+      Value<int> studyTimeMilliseconds,
       Value<int> inputWords,
       Value<int> outputWords,
       Value<int> inputTimeSeconds,
+      Value<int> inputTimeMilliseconds,
       Value<int> outputTimeSeconds,
+      Value<int> outputTimeMilliseconds,
     });
 
 class $$DailyStudyRecordsTableFilterComposer
@@ -21362,6 +21718,11 @@ class $$DailyStudyRecordsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<int> get studyTimeMilliseconds => $composableBuilder(
+    column: $table.studyTimeMilliseconds,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnFilters<int> get inputWords => $composableBuilder(
     column: $table.inputWords,
     builder: (column) => ColumnFilters(column),
@@ -21377,8 +21738,18 @@ class $$DailyStudyRecordsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<int> get inputTimeMilliseconds => $composableBuilder(
+    column: $table.inputTimeMilliseconds,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnFilters<int> get outputTimeSeconds => $composableBuilder(
     column: $table.outputTimeSeconds,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get outputTimeMilliseconds => $composableBuilder(
+    column: $table.outputTimeMilliseconds,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -21407,6 +21778,11 @@ class $$DailyStudyRecordsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get studyTimeMilliseconds => $composableBuilder(
+    column: $table.studyTimeMilliseconds,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get inputWords => $composableBuilder(
     column: $table.inputWords,
     builder: (column) => ColumnOrderings(column),
@@ -21422,8 +21798,18 @@ class $$DailyStudyRecordsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get inputTimeMilliseconds => $composableBuilder(
+    column: $table.inputTimeMilliseconds,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get outputTimeSeconds => $composableBuilder(
     column: $table.outputTimeSeconds,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get outputTimeMilliseconds => $composableBuilder(
+    column: $table.outputTimeMilliseconds,
     builder: (column) => ColumnOrderings(column),
   );
 }
@@ -21448,6 +21834,11 @@ class $$DailyStudyRecordsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<int> get studyTimeMilliseconds => $composableBuilder(
+    column: $table.studyTimeMilliseconds,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<int> get inputWords => $composableBuilder(
     column: $table.inputWords,
     builder: (column) => column,
@@ -21463,8 +21854,18 @@ class $$DailyStudyRecordsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<int> get inputTimeMilliseconds => $composableBuilder(
+    column: $table.inputTimeMilliseconds,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<int> get outputTimeSeconds => $composableBuilder(
     column: $table.outputTimeSeconds,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get outputTimeMilliseconds => $composableBuilder(
+    column: $table.outputTimeMilliseconds,
     builder: (column) => column,
   );
 }
@@ -21512,36 +21913,48 @@ class $$DailyStudyRecordsTableTableManager
                 Value<int> id = const Value.absent(),
                 Value<DateTime> date = const Value.absent(),
                 Value<int> studyTimeSeconds = const Value.absent(),
+                Value<int> studyTimeMilliseconds = const Value.absent(),
                 Value<int> inputWords = const Value.absent(),
                 Value<int> outputWords = const Value.absent(),
                 Value<int> inputTimeSeconds = const Value.absent(),
+                Value<int> inputTimeMilliseconds = const Value.absent(),
                 Value<int> outputTimeSeconds = const Value.absent(),
+                Value<int> outputTimeMilliseconds = const Value.absent(),
               }) => DailyStudyRecordsCompanion(
                 id: id,
                 date: date,
                 studyTimeSeconds: studyTimeSeconds,
+                studyTimeMilliseconds: studyTimeMilliseconds,
                 inputWords: inputWords,
                 outputWords: outputWords,
                 inputTimeSeconds: inputTimeSeconds,
+                inputTimeMilliseconds: inputTimeMilliseconds,
                 outputTimeSeconds: outputTimeSeconds,
+                outputTimeMilliseconds: outputTimeMilliseconds,
               ),
           createCompanionCallback:
               ({
                 Value<int> id = const Value.absent(),
                 required DateTime date,
                 Value<int> studyTimeSeconds = const Value.absent(),
+                Value<int> studyTimeMilliseconds = const Value.absent(),
                 Value<int> inputWords = const Value.absent(),
                 Value<int> outputWords = const Value.absent(),
                 Value<int> inputTimeSeconds = const Value.absent(),
+                Value<int> inputTimeMilliseconds = const Value.absent(),
                 Value<int> outputTimeSeconds = const Value.absent(),
+                Value<int> outputTimeMilliseconds = const Value.absent(),
               }) => DailyStudyRecordsCompanion.insert(
                 id: id,
                 date: date,
                 studyTimeSeconds: studyTimeSeconds,
+                studyTimeMilliseconds: studyTimeMilliseconds,
                 inputWords: inputWords,
                 outputWords: outputWords,
                 inputTimeSeconds: inputTimeSeconds,
+                inputTimeMilliseconds: inputTimeMilliseconds,
                 outputTimeSeconds: outputTimeSeconds,
+                outputTimeMilliseconds: outputTimeMilliseconds,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
@@ -21578,8 +21991,11 @@ typedef $$DailyStageStudyRecordsTableCreateCompanionBuilder =
       required DateTime date,
       required StudyStage stage,
       Value<int> studyTimeSeconds,
+      Value<int> studyTimeMilliseconds,
       Value<int> inputTimeSeconds,
+      Value<int> inputTimeMilliseconds,
       Value<int> outputTimeSeconds,
+      Value<int> outputTimeMilliseconds,
     });
 typedef $$DailyStageStudyRecordsTableUpdateCompanionBuilder =
     DailyStageStudyRecordsCompanion Function({
@@ -21587,8 +22003,11 @@ typedef $$DailyStageStudyRecordsTableUpdateCompanionBuilder =
       Value<DateTime> date,
       Value<StudyStage> stage,
       Value<int> studyTimeSeconds,
+      Value<int> studyTimeMilliseconds,
       Value<int> inputTimeSeconds,
+      Value<int> inputTimeMilliseconds,
       Value<int> outputTimeSeconds,
+      Value<int> outputTimeMilliseconds,
     });
 
 class $$DailyStageStudyRecordsTableFilterComposer
@@ -21621,13 +22040,28 @@ class $$DailyStageStudyRecordsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<int> get studyTimeMilliseconds => $composableBuilder(
+    column: $table.studyTimeMilliseconds,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnFilters<int> get inputTimeSeconds => $composableBuilder(
     column: $table.inputTimeSeconds,
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<int> get inputTimeMilliseconds => $composableBuilder(
+    column: $table.inputTimeMilliseconds,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnFilters<int> get outputTimeSeconds => $composableBuilder(
     column: $table.outputTimeSeconds,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get outputTimeMilliseconds => $composableBuilder(
+    column: $table.outputTimeMilliseconds,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -21661,13 +22095,28 @@ class $$DailyStageStudyRecordsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get studyTimeMilliseconds => $composableBuilder(
+    column: $table.studyTimeMilliseconds,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get inputTimeSeconds => $composableBuilder(
     column: $table.inputTimeSeconds,
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get inputTimeMilliseconds => $composableBuilder(
+    column: $table.inputTimeMilliseconds,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get outputTimeSeconds => $composableBuilder(
     column: $table.outputTimeSeconds,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get outputTimeMilliseconds => $composableBuilder(
+    column: $table.outputTimeMilliseconds,
     builder: (column) => ColumnOrderings(column),
   );
 }
@@ -21695,13 +22144,28 @@ class $$DailyStageStudyRecordsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<int> get studyTimeMilliseconds => $composableBuilder(
+    column: $table.studyTimeMilliseconds,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<int> get inputTimeSeconds => $composableBuilder(
     column: $table.inputTimeSeconds,
     builder: (column) => column,
   );
 
+  GeneratedColumn<int> get inputTimeMilliseconds => $composableBuilder(
+    column: $table.inputTimeMilliseconds,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<int> get outputTimeSeconds => $composableBuilder(
     column: $table.outputTimeSeconds,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get outputTimeMilliseconds => $composableBuilder(
+    column: $table.outputTimeMilliseconds,
     builder: (column) => column,
   );
 }
@@ -21756,15 +22220,21 @@ class $$DailyStageStudyRecordsTableTableManager
                 Value<DateTime> date = const Value.absent(),
                 Value<StudyStage> stage = const Value.absent(),
                 Value<int> studyTimeSeconds = const Value.absent(),
+                Value<int> studyTimeMilliseconds = const Value.absent(),
                 Value<int> inputTimeSeconds = const Value.absent(),
+                Value<int> inputTimeMilliseconds = const Value.absent(),
                 Value<int> outputTimeSeconds = const Value.absent(),
+                Value<int> outputTimeMilliseconds = const Value.absent(),
               }) => DailyStageStudyRecordsCompanion(
                 id: id,
                 date: date,
                 stage: stage,
                 studyTimeSeconds: studyTimeSeconds,
+                studyTimeMilliseconds: studyTimeMilliseconds,
                 inputTimeSeconds: inputTimeSeconds,
+                inputTimeMilliseconds: inputTimeMilliseconds,
                 outputTimeSeconds: outputTimeSeconds,
+                outputTimeMilliseconds: outputTimeMilliseconds,
               ),
           createCompanionCallback:
               ({
@@ -21772,15 +22242,21 @@ class $$DailyStageStudyRecordsTableTableManager
                 required DateTime date,
                 required StudyStage stage,
                 Value<int> studyTimeSeconds = const Value.absent(),
+                Value<int> studyTimeMilliseconds = const Value.absent(),
                 Value<int> inputTimeSeconds = const Value.absent(),
+                Value<int> inputTimeMilliseconds = const Value.absent(),
                 Value<int> outputTimeSeconds = const Value.absent(),
+                Value<int> outputTimeMilliseconds = const Value.absent(),
               }) => DailyStageStudyRecordsCompanion.insert(
                 id: id,
                 date: date,
                 stage: stage,
                 studyTimeSeconds: studyTimeSeconds,
+                studyTimeMilliseconds: studyTimeMilliseconds,
                 inputTimeSeconds: inputTimeSeconds,
+                inputTimeMilliseconds: inputTimeMilliseconds,
                 outputTimeSeconds: outputTimeSeconds,
+                outputTimeMilliseconds: outputTimeMilliseconds,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))

@@ -14,6 +14,10 @@ class DailyStudyRecords extends Table {
   /// 当日累计学习时长（秒）
   IntColumn get studyTimeSeconds => integer().withDefault(const Constant(0))();
 
+  /// 当日累计学习时长（毫秒）；新统计写入的真实精度来源。
+  IntColumn get studyTimeMilliseconds =>
+      integer().withDefault(const Constant(0))();
+
   /// 当日输入词数（听了多少词）
   IntColumn get inputWords => integer().withDefault(const Constant(0))();
 
@@ -23,6 +27,14 @@ class DailyStudyRecords extends Table {
   /// 当日输入时间（秒）— 音频播放时间
   IntColumn get inputTimeSeconds => integer().withDefault(const Constant(0))();
 
+  /// 当日累计输入时间（毫秒）。
+  IntColumn get inputTimeMilliseconds =>
+      integer().withDefault(const Constant(0))();
+
   /// 当日输出时间（秒）— 跟读/复述暂停时间
   IntColumn get outputTimeSeconds => integer().withDefault(const Constant(0))();
+
+  /// 当日累计输出时间（毫秒）。
+  IntColumn get outputTimeMilliseconds =>
+      integer().withDefault(const Constant(0))();
 }

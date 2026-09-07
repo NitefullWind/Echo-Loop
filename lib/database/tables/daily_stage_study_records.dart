@@ -19,11 +19,23 @@ class DailyStageStudyRecords extends Table {
   /// 当日该阶段累计学习时长（秒）
   IntColumn get studyTimeSeconds => integer().withDefault(const Constant(0))();
 
+  /// 当日该阶段累计学习时长（毫秒）。
+  IntColumn get studyTimeMilliseconds =>
+      integer().withDefault(const Constant(0))();
+
   /// 当日该阶段输入时间（秒）— 音频播放时间
   IntColumn get inputTimeSeconds => integer().withDefault(const Constant(0))();
 
+  /// 当日该阶段累计输入时间（毫秒）。
+  IntColumn get inputTimeMilliseconds =>
+      integer().withDefault(const Constant(0))();
+
   /// 当日该阶段输出时间（秒）— 跟读/复述时间
   IntColumn get outputTimeSeconds => integer().withDefault(const Constant(0))();
+
+  /// 当日该阶段累计输出时间（毫秒）。
+  IntColumn get outputTimeMilliseconds =>
+      integer().withDefault(const Constant(0))();
 
   @override
   List<Set<Column>> get uniqueKeys => [

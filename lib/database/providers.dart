@@ -17,6 +17,7 @@ import 'daos/daily_stage_study_record_dao.dart';
 import 'daos/tts_cache_dao.dart';
 import 'daos/memory_schedule_dao.dart';
 import '../services/study_time_service.dart';
+import '../services/study_statistics_recorder.dart';
 import '../providers/audio_library_provider.dart';
 import '../providers/collection_provider.dart';
 import '../providers/learning_progress_provider.dart';
@@ -205,5 +206,13 @@ final studyTimeServiceProvider = Provider<StudyTimeService>((ref) {
   return StudyTimeService(
     ref.watch(dailyStudyRecordDaoProvider),
     ref.watch(dailyStageStudyRecordDaoProvider),
+  );
+});
+
+/// 统一学习统计写入 Provider。
+final studyStatisticsRecorderProvider = Provider<StudyStatisticsRecorder>((ref) {
+  return StudyStatisticsRecorder(
+    studyTimeService: ref.watch(studyTimeServiceProvider),
+    vocabularyTracker: ref.watch(learnedVocabularyTrackerProvider),
   );
 });

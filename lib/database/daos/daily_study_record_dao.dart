@@ -27,6 +27,9 @@ class DailyStudyRecordDao extends DatabaseAccessor<AppDatabase>
     int outputWords = 0,
     int inputTime = 0,
     int outputTime = 0,
+    int studyTimeMilliseconds = 0,
+    int inputTimeMilliseconds = 0,
+    int outputTimeMilliseconds = 0,
   }) async {
     final dateOnly = _dateOnly(date);
     await transaction(() async {
@@ -43,6 +46,9 @@ class DailyStudyRecordDao extends DatabaseAccessor<AppDatabase>
             outputWords: Value(outputWords),
             inputTimeSeconds: Value(inputTime),
             outputTimeSeconds: Value(outputTime),
+            studyTimeMilliseconds: Value(studyTimeMilliseconds),
+            inputTimeMilliseconds: Value(inputTimeMilliseconds),
+            outputTimeMilliseconds: Value(outputTimeMilliseconds),
           ),
         );
       } else {
@@ -55,6 +61,15 @@ class DailyStudyRecordDao extends DatabaseAccessor<AppDatabase>
             outputWords: Value(existing.outputWords + outputWords),
             inputTimeSeconds: Value(existing.inputTimeSeconds + inputTime),
             outputTimeSeconds: Value(existing.outputTimeSeconds + outputTime),
+            studyTimeMilliseconds: Value(
+              existing.studyTimeMilliseconds + studyTimeMilliseconds,
+            ),
+            inputTimeMilliseconds: Value(
+              existing.inputTimeMilliseconds + inputTimeMilliseconds,
+            ),
+            outputTimeMilliseconds: Value(
+              existing.outputTimeMilliseconds + outputTimeMilliseconds,
+            ),
           ),
         );
       }
