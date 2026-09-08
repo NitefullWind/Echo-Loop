@@ -296,6 +296,7 @@ class StudyTimeService {
   /// 获取指定日期的阶段明细列表
   ///
   /// 返回该日期所有有记录的阶段，按阶段序号排序。
+  /// 时长优先使用累计毫秒字段，兼容没有毫秒数据的旧记录。
   /// 无记录时返回空列表。
   Future<List<DailyStageStudyRecordData>> getStageBreakdown(
     DateTime date,
@@ -305,9 +306,18 @@ class StudyTimeService {
         .map(
           (r) => DailyStageStudyRecordData(
             stage: r.stage,
-            studyTimeSeconds: r.studyTimeSeconds,
-            inputTimeSeconds: r.inputTimeSeconds,
-            outputTimeSeconds: r.outputTimeSeconds,
+            studyTimeSeconds: _durationSeconds(
+              r.studyTimeMilliseconds,
+              r.studyTimeSeconds,
+            ),
+            inputTimeSeconds: _durationSeconds(
+              r.inputTimeMilliseconds,
+              r.inputTimeSeconds,
+            ),
+            outputTimeSeconds: _durationSeconds(
+              r.outputTimeMilliseconds,
+              r.outputTimeSeconds,
+            ),
           ),
         )
         .toList();

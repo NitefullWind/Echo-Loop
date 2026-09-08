@@ -65,6 +65,31 @@ void main() {
       );
     });
 
+    test('日阶段明细使用累计毫秒精度与总量保持一致', () async {
+      final date = DateTime(2026, 9, 8);
+      for (var i = 0; i < 4; i += 1) {
+        await service.addStudyDuration(
+          const Duration(milliseconds: 45900),
+          date: date,
+          stage: StudyStage.freePlayer,
+        );
+        await service.addInputDuration(
+          const Duration(milliseconds: 45900),
+          date: date,
+          stage: StudyStage.freePlayer,
+        );
+      }
+
+      final stage = (await service.getStageBreakdown(date)).single;
+      final total = await service.getDayTotal(date);
+
+      expect(total, isNotNull);
+      expect(stage.studyTimeSeconds, 183);
+      expect(stage.inputTimeSeconds, 183);
+      expect(stage.studyTimeSeconds, total?.studyTimeSeconds);
+      expect(stage.inputTimeSeconds, total?.inputTimeSeconds);
+    });
+
     test('首次调用 getTodayStudyTime 返回 0', () async {
       final result = await service.getTodayStudyTime();
       expect(result, 0);

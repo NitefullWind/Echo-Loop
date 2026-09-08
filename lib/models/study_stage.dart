@@ -22,7 +22,10 @@ enum StudyStage {
   savedSentencesReview(5),
 
   /// 收藏词汇复习
-  savedVocabularyReview(6);
+  savedVocabularyReview(6),
+
+  /// 随心听
+  freePlayer(7);
 
   const StudyStage(this.value);
 

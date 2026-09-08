@@ -12,8 +12,11 @@ import '../../models/playback_settings.dart';
 import '../../models/sentence.dart';
 import '../../models/sentence_playback_result.dart';
 import '../../models/sense_group_range_playback.dart';
+import '../../models/study_stage.dart';
 import '../../services/app_logger.dart';
+import '../../services/study_session_timer.dart';
 import '../../services/storage_service.dart';
+import '../../utils/word_counter.dart';
 import '../audio_engine/audio_engine_provider.dart';
 import '../listening_practice/bookmark_manager.dart';
 import '../favorite_sentence_lifecycle_provider.dart';
@@ -51,6 +54,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
   int? _loadedResourceGeneration;
   SenseGroupRangePlayback? _senseGroupRangePlayback;
   PlaybackStateDao? _playbackStateDaoCache;
+  StudySessionTimer? _studySessionTimer;
 
   MediaEngine get _engine {
     final cached = _engineCache;
@@ -58,6 +62,44 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
     final engine = ref.read(mediaEngineProvider.notifier);
     _engineCache = engine;
     return engine;
+  }
+
+  /// 创建一次视频随心听前台学习计时会话；播放态结束后由统一入口停止。
+  void _startStudySessionTimer() {
+    if (_studySessionTimer != null) return;
+    final timer = StudySessionTimer(
+      studyTimeService: ref.read(studyTimeServiceProvider),
+      stage: StudyStage.freePlayer,
+      activityGate: ref.read(studyActivityGateProvider),
+      recordInputDuration: true,
+      logScope: 'FreePlayerMediaTimer',
+    );
+    _studySessionTimer = timer;
+    timer.start();
+  }
+
+  /// 计时器拥有者是媒体播放 Provider，释放或暂停时立即落库并销毁会话。
+  Future<void> _stopStudySessionTimer() async {
+    final timer = _studySessionTimer;
+    _studySessionTimer = null;
+    if (timer != null) await timer.dispose();
+  }
+
+  void _setPlaying(bool playing) {
+    if (!playing) {
+      state = state.copyWith(isPlaying: false);
+      unawaited(_stopStudySessionTimer());
+      return;
+    }
+    if (state.isPlaying) return;
+    state = state.copyWith(isPlaying: playing);
+    _startStudySessionTimer();
+  }
+
+  /// 等待计时器最终落库，保证暂停、自然结束和页面释放不会遗失尾部时长。
+  Future<void> _stopPlaying() async {
+    state = state.copyWith(isPlaying: false);
+    await _stopStudySessionTimer();
   }
 
   /// 当前媒体会话的意群区间播放器；随心听页面只通过该契约传递播放意图。
@@ -78,6 +120,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
       unawaited(_landscapeVideoSub?.cancel());
       unawaited(_videoAspectRatioSub?.cancel());
       final engine = _engineCache;
+      unawaited(_stopStudySessionTimer());
       unawaited(_senseGroupRangePlayback?.cancel());
       engine?.setTransportHandlers(onPlay: null, onPause: null);
       unawaited(engine?.releaseForOwnerDispose());
@@ -199,8 +242,8 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
       _engine.setTransportHandlers(onPlay: play, onPause: pause);
       _positionSub = _engine.positionStream.listen(_onPositionChanged);
       _playingSub = _engine.playingStream.listen((playing) {
-        // 底层播放状态是播放/暂停图标的最终校准源。循环播放时媒体自然结束会先
-        // 发 false，下一轮启动再发 true；两种方向都同步，避免 UI 停在播放图标。
+        // 底层状态只校准 UI。计时器由 Provider 的显式播放/暂停入口控制，避免
+        // 区间起播时 backend 的瞬时 false 让计时器被错误切断。
         if (state.isPlaying != playing) {
           state = state.copyWith(isPlaying: playing);
         }
@@ -412,7 +455,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
     _activeSentenceDrivenPlayback = false;
     _awaitingReplayFromStart = false;
     _pauseAfterPosition = null;
-    state = state.copyWith(isPlaying: false);
+    await _stopPlaying();
     await _engine.pause();
     _playbackSessionId = _engine.currentSessionId;
   }
@@ -472,11 +515,8 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
     }
 
     await _engine.seek(target);
-    state = state.copyWith(
-      position: target,
-      sentenceRepeatsDone: 0,
-      isPlaying: false,
-    );
+    await _stopPlaying();
+    state = state.copyWith(position: target, sentenceRepeatsDone: 0);
     if (wasPlaying) unawaited(play(resetWholeLoops: false));
   }
 
@@ -874,6 +914,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
       releaseError ??= error;
       AppLogger.log('MediaPlayback', 'release engine detach failed: $error');
     } finally {
+      await _stopPlaying();
       state = const MediaPlaybackState();
     }
     final error = releaseError;
@@ -889,7 +930,8 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
     _activeSentenceDrivenPlayback = false;
     _awaitingReplayFromStart = false;
     _pauseAfterPosition = null;
-    state = state.copyWith(isPlaying: false, sentenceRepeatsDone: 0);
+    await _stopPlaying();
+    state = state.copyWith(sentenceRepeatsDone: 0);
     final pos = _currentPos;
     if (pos != null && pos >= 0 && pos < _playable.length) {
       await _engine.seek(_playable[pos].startTime);
@@ -959,7 +1001,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
         state = state.copyWith(position: target.startTime);
       }
     }
-    state = state.copyWith(isPlaying: true);
+    _setPlaying(true);
     AppLogger.log(
       'MediaPlayback',
       'start whole playToEnd active=${_engine.isActiveSession(_playbackSessionId)}',
@@ -974,7 +1016,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
       final settings = state.settings;
       if (!shouldLoopWhole(settings.loopWhole, settings.wholeLoopCount, done)) {
         _awaitingReplayFromStart = true;
-        state = state.copyWith(isPlaying: false);
+        await _stopPlaying();
         // 已自然播完时断点应回到开头，不能在退出后恢复为 -0:00 的终点状态。
         await saveCurrentPlaybackState(silent: true, position: Duration.zero);
         await _engine.pauseKeepSession();
@@ -1037,10 +1079,10 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
     _awaitingReplayFromStart = false;
     _playbackSessionId = _engine.newSession();
     state = state.copyWith(
-      isPlaying: true,
       wholeLoopsDone: resetWholeLoops ? 0 : state.wholeLoopsDone,
       sentenceRepeatsDone: resetSentenceRepeats ? 0 : state.sentenceRepeatsDone,
     );
+    _setPlaying(true);
     unawaited(_playSentenceDriven(gen));
   }
 
@@ -1049,7 +1091,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
     while (gen == _playbackGen) {
       final playable = _playable;
       if (playable.isEmpty || pos < 0 || pos >= playable.length) {
-        state = state.copyWith(isPlaying: false);
+        await _stopPlaying();
         return;
       }
       final sentence = playable[pos];
@@ -1063,6 +1105,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
       if (gen != _playbackGen || result != SentencePlaybackResult.completed) {
         return;
       }
+      _recordCompletedSentenceStatistics(sentence);
       if (_pauseAfterPosition != null) {
         await pause();
         return;
@@ -1088,7 +1131,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
         case StopPlayback():
           _awaitingReplayFromStart = true;
           _activeSentenceDrivenPlayback = false;
-          state = state.copyWith(isPlaying: false);
+          await _stopPlaying();
           // 单句驱动走到播放列表末尾同样属于自然完成，清除终点断点。
           await saveCurrentPlaybackState(silent: true, position: Duration.zero);
           await _engine.pauseKeepSession();
@@ -1109,6 +1152,22 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
           _autoSaveProgress();
       }
     }
+  }
+
+  /// 仅在按句区间播放自然完成后写入输入统计；连续整篇播放的总时长由计时器负责。
+  ///
+  /// 不等待后台数据库写入，避免统计延迟影响媒体播放、循环或切句。
+  void _recordCompletedSentenceStatistics(Sentence sentence) {
+    final recorder = ref.read(studyStatisticsRecorderProvider);
+    recorder.recordAsync(
+      recorder.recordSentencePlayback(
+        duration: sentence.duration,
+        heardWordCount: countWords(sentence.text),
+        text: sentence.text,
+        stage: StudyStage.freePlayer,
+        recordInputDuration: false,
+      ),
+    );
   }
 
   void _setCurrentFromSentence(Sentence sentence) {

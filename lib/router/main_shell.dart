@@ -31,6 +31,7 @@ import '../providers/reminder_settings_provider.dart';
 import '../providers/review_reminder_provider.dart';
 import '../providers/startup_bootstrap_provider.dart';
 import '../providers/study_stats_provider.dart';
+import '../providers/study_duration_provider.dart';
 import '../providers/study_task_provider.dart';
 import '../providers/tag_provider.dart';
 import '../providers/time_provider.dart';
@@ -102,6 +103,9 @@ class _MainShellState extends ConsumerState<MainShell> with RouteAware {
       'MainShell uncovered by root route: rootRouteVisible=true',
     );
     setState(() => _rootRouteVisible = true);
+    if (widget.navigationShell.currentIndex == 1) {
+      _refreshStudyData();
+    }
   }
 
   /// 预热学习页首屏所需数据：音频列表 + 学习进度。
@@ -484,6 +488,7 @@ class _MainShellState extends ConsumerState<MainShell> with RouteAware {
   void _refreshStudyData() {
     ref.invalidate(studyTaskProvider);
     ref.invalidate(completedAudioProvider);
+    ref.invalidate(studyDurationRecordsProvider);
     ref.read(studyStatsNotifierProvider.notifier).refresh();
   }
 

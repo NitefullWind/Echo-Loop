@@ -18,6 +18,7 @@ import 'daos/tts_cache_dao.dart';
 import 'daos/memory_schedule_dao.dart';
 import '../services/study_time_service.dart';
 import '../services/study_statistics_recorder.dart';
+import '../services/study_activity_gate.dart';
 import '../providers/audio_library_provider.dart';
 import '../providers/collection_provider.dart';
 import '../providers/learning_progress_provider.dart';
@@ -209,10 +210,20 @@ final studyTimeServiceProvider = Provider<StudyTimeService>((ref) {
   );
 });
 
+/// 学习统计前台资格门控 Provider。
+final studyActivityGateProvider = Provider<StudyActivityGate>((ref) {
+  final gate = StudyActivityGate();
+  ref.onDispose(gate.dispose);
+  return gate;
+});
+
 /// 统一学习统计写入 Provider。
-final studyStatisticsRecorderProvider = Provider<StudyStatisticsRecorder>((ref) {
+final studyStatisticsRecorderProvider = Provider<StudyStatisticsRecorder>((
+  ref,
+) {
   return StudyStatisticsRecorder(
     studyTimeService: ref.watch(studyTimeServiceProvider),
+    activityGate: ref.watch(studyActivityGateProvider),
     vocabularyTracker: ref.watch(learnedVocabularyTrackerProvider),
   );
 });

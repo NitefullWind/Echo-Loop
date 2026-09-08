@@ -1,9 +1,8 @@
 import 'dart:async';
 
-import 'package:flutter/widgets.dart';
-
 import '../models/study_stage.dart';
 import 'app_logger.dart';
+import 'study_activity_gate.dart';
 import 'study_time_service.dart';
 
 /// 统计一个前台有效学习会话，并以增量方式定期落库。
@@ -14,10 +13,13 @@ final class StudySessionTimer {
   StudySessionTimer({
     required StudyTimeService studyTimeService,
     required StudyStage stage,
+    required StudyActivityGate activityGate,
     this.checkpointInterval = const Duration(seconds: 30),
+    this.recordInputDuration = false,
     String? logScope,
   }) : _studyTimeService = studyTimeService,
        _stage = stage,
+       _activityGate = activityGate,
        _logScope = logScope ?? 'StudySessionTimer' {
     if (checkpointInterval <= Duration.zero) {
       throw ArgumentError.value(
@@ -26,20 +28,28 @@ final class StudySessionTimer {
         '必须大于 0。',
       );
     }
-    _lifecycleListener = AppLifecycleListener(onStateChange: _onLifecycleState);
+    _activityGate.addListener(_onActivityChanged);
   }
 
   final StudyTimeService _studyTimeService;
   final StudyStage _stage;
+  final StudyActivityGate _activityGate;
   final Duration checkpointInterval;
+
+  /// 是否将同一段前台有效时长同时计入听力时长。
+  ///
+  /// 默认关闭，避免复习/任务计时被误归类为输入；随心听播放显式开启。
+  final bool recordInputDuration;
   final String _logScope;
   final Stopwatch _stopwatch = Stopwatch();
-  late final AppLifecycleListener _lifecycleListener;
   Timer? _checkpointTimer;
   Future<void>? _flushOperation;
-  int _persistedMilliseconds = 0;
+  int _persistedStudyMilliseconds = 0;
+  int _persistedInputMilliseconds = 0;
   bool _started = false;
   bool _stopped = false;
+  /// 区分“用户/业务主动暂停”和“App 进入后台”：前者不应在回前台时自动恢复。
+  bool _timingRequested = false;
 
   /// 当前会话累计的前台有效时长。
   Duration get elapsed => _stopwatch.elapsed;
@@ -48,28 +58,24 @@ final class StudySessionTimer {
   void start() {
     if (_stopped || _started) return;
     _started = true;
-    _stopwatch.start();
-    _checkpointTimer = Timer.periodic(checkpointInterval, (_) {
-      unawaited(flush());
-    });
+    _timingRequested = true;
+    if (_activityGate.isForeground) _startForegroundTiming();
     AppLogger.log(_logScope, 'session.start stage=${_stage.name}');
   }
 
   /// 暂停前台计时，并立即尝试落库。
   Future<void> pause() async {
     if (!_started || _stopped) return;
-    _stopwatch.stop();
-    AppLogger.log(
-      _logScope,
-      'session.pause stage=${_stage.name} elapsedMs=${_stopwatch.elapsedMilliseconds}',
-    );
-    await flush();
+    _timingRequested = false;
+    await _pauseAndFlush();
   }
 
   /// 恢复前台计时。
   void resume() {
-    if (!_started || _stopped || _stopwatch.isRunning) return;
-    _stopwatch.start();
+    if (!_started || _stopped) return;
+    _timingRequested = true;
+    if (!_activityGate.isForeground) return;
+    _startForegroundTiming();
     AppLogger.log(_logScope, 'session.resume stage=${_stage.name}');
   }
 
@@ -84,19 +90,32 @@ final class StudySessionTimer {
 
   Future<void> _flushIncrement() async {
     final elapsedMilliseconds = _stopwatch.elapsedMilliseconds;
-    final pendingMilliseconds = elapsedMilliseconds - _persistedMilliseconds;
-    final pendingSeconds = pendingMilliseconds ~/ 1000;
-    if (pendingSeconds <= 0) return;
-    final persistedMilliseconds = pendingSeconds * 1000;
+    final pendingStudyMilliseconds =
+        elapsedMilliseconds - _persistedStudyMilliseconds;
+    final pendingInputMilliseconds = recordInputDuration
+        ? elapsedMilliseconds - _persistedInputMilliseconds
+        : 0;
+    if (pendingStudyMilliseconds <= 0 && pendingInputMilliseconds <= 0) return;
     try {
-      await _studyTimeService.addStudyTime(
-        persistedMilliseconds ~/ 1000,
-        stage: _stage,
-      );
-      _persistedMilliseconds += persistedMilliseconds;
+      if (pendingStudyMilliseconds > 0) {
+        await _studyTimeService.addStudyDuration(
+          Duration(milliseconds: pendingStudyMilliseconds),
+          stage: _stage,
+        );
+        _persistedStudyMilliseconds += pendingStudyMilliseconds;
+      }
+      if (pendingInputMilliseconds > 0) {
+        await _studyTimeService.addInputDuration(
+          Duration(milliseconds: pendingInputMilliseconds),
+          stage: _stage,
+        );
+        _persistedInputMilliseconds += pendingInputMilliseconds;
+      }
       AppLogger.log(
         _logScope,
-        'session.flush stage=${_stage.name} seconds=$pendingSeconds totalMs=$elapsedMilliseconds',
+        'session.flush stage=${_stage.name} pendingStudyMs=$pendingStudyMilliseconds '
+        'pendingInputMs=$pendingInputMilliseconds '
+        'totalMs=$elapsedMilliseconds',
       );
     } catch (error, stackTrace) {
       AppLogger.log(
@@ -110,9 +129,8 @@ final class StudySessionTimer {
   Future<void> stop() async {
     if (_stopped) return;
     _stopped = true;
-    _stopwatch.stop();
-    _checkpointTimer?.cancel();
-    _checkpointTimer = null;
+    _timingRequested = false;
+    _stopForegroundTiming();
     await flush();
     AppLogger.log(
       _logScope,
@@ -123,19 +141,43 @@ final class StudySessionTimer {
   /// stop 的资源释放别名，便于 Provider 销毁时安全调用。
   Future<void> dispose() async {
     await stop();
-    _lifecycleListener.dispose();
+    _activityGate.removeListener(_onActivityChanged);
   }
 
-  void _onLifecycleState(AppLifecycleState state) {
+  void _startForegroundTiming() {
+    if (_stopwatch.isRunning) return;
+    _stopwatch.start();
+    _checkpointTimer ??= Timer.periodic(checkpointInterval, (_) {
+      unawaited(flush());
+    });
+  }
+
+  void _stopForegroundTiming() {
+    _stopwatch.stop();
+    _checkpointTimer?.cancel();
+    _checkpointTimer = null;
+  }
+
+  void _onActivityChanged(bool isForeground) {
     if (!_started || _stopped) return;
-    switch (state) {
-      case AppLifecycleState.paused:
-      case AppLifecycleState.hidden:
-      case AppLifecycleState.inactive:
-      case AppLifecycleState.detached:
-        unawaited(pause());
-      case AppLifecycleState.resumed:
-        resume();
+    if (isForeground) {
+      if (!_timingRequested) return;
+      _startForegroundTiming();
+      AppLogger.log(_logScope, 'session.resume stage=${_stage.name}');
+    } else {
+      unawaited(_pauseForActivity());
     }
+  }
+
+  /// App 进入后台时暂停前台计时，但保留业务层的恢复意图。
+  Future<void> _pauseForActivity() => _pauseAndFlush();
+
+  Future<void> _pauseAndFlush() async {
+    _stopForegroundTiming();
+    AppLogger.log(
+      _logScope,
+      'session.pause stage=${_stage.name} elapsedMs=${_stopwatch.elapsedMilliseconds}',
+    );
+    await flush();
   }
 }

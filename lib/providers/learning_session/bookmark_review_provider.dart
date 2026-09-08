@@ -190,6 +190,7 @@ class BookmarkReview extends _$BookmarkReview {
     _studySessionTimer = StudySessionTimer(
       studyTimeService: ref.read(studyTimeServiceProvider),
       stage: StudyStage.savedSentencesReview,
+      activityGate: ref.read(studyActivityGateProvider),
       logScope: 'SavedSentenceReviewTimer',
     );
     _studySessionTimer!.start();

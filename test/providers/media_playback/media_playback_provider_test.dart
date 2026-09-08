@@ -10,8 +10,10 @@ import 'package:echo_loop/models/audio_item.dart';
 import 'package:echo_loop/models/listening_practice_state.dart';
 import 'package:echo_loop/models/media_load_result.dart';
 import 'package:echo_loop/models/sentence.dart';
+import 'package:echo_loop/models/study_stage.dart';
 import 'package:echo_loop/database/providers.dart';
 import 'package:echo_loop/providers/audio_engine/audio_engine_provider.dart';
+import 'package:echo_loop/providers/learned_vocabulary_tracker_provider.dart';
 import 'package:echo_loop/providers/media_engine/media_engine_provider.dart';
 import 'package:echo_loop/providers/media_playback/media_playback_provider.dart';
 import 'package:echo_loop/services/media_session_router.dart';
@@ -115,6 +117,28 @@ void main() {
     await controller.load(item());
     await Future<void>.delayed(Duration.zero);
     return controller;
+  }
+
+  Future<void> waitForSentenceStatistics() async {
+    for (var attempt = 0; attempt < 20; attempt += 1) {
+      final record = await database.dailyStudyRecordDao.getByDate(
+        DateTime.now(),
+      );
+      if ((record?.inputWords ?? 0) >= 2) return;
+      await Future<void>.delayed(Duration.zero);
+    }
+    fail('Timed out waiting for asynchronous sentence statistics write.');
+  }
+
+  Future<void> waitForStudyDuration() async {
+    for (var attempt = 0; attempt < 20; attempt += 1) {
+      final record = await database.dailyStudyRecordDao.getByDate(
+        DateTime.now(),
+      );
+      if ((record?.studyTimeMilliseconds ?? 0) >= 1000) return;
+      await Future<void>.delayed(Duration.zero);
+    }
+    fail('Timed out waiting for the asynchronous study duration write.');
   }
 
   test('打开媒体前预读断点并作为 backend 初始位置', () async {
@@ -654,6 +678,45 @@ void main() {
 
     expect(backend.playCalls, 0);
     expect(container.read(mediaPlaybackProvider).settings.loopSentence, isTrue);
+  });
+
+  test('按句媒体播放自然完成后异步记录学习统计', () async {
+    final controller = await loadController();
+    await controller.updateSettings(
+      container
+          .read(mediaPlaybackProvider)
+          .settings
+          .copyWith(
+            loopSentence: true,
+            sentenceLoopCount: 1,
+            sentenceInterval: Duration.zero,
+          ),
+    );
+
+    unawaited(controller.play());
+    await waitUntil(() => backend.playCalls == 1);
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    // 区间播放以到达句尾位置作为自然完成信号；直接发整媒体完成事件会因
+    // fake backend 未同步到区间终点而被 MediaEngine 判为失败。
+    backend.emitPosition(const Duration(seconds: 50));
+    await waitForSentenceStatistics();
+    await controller.pause();
+    await waitForStudyDuration();
+    await container.read(learnedVocabularyTrackerProvider).flush();
+
+    final record = await database.dailyStudyRecordDao.getByDate(DateTime.now());
+    expect(record?.studyTimeMilliseconds, greaterThanOrEqualTo(1000));
+    expect(record?.inputTimeMilliseconds, record?.studyTimeMilliseconds);
+    expect(record?.inputWords, 2);
+    final stageRecord = (await database.dailyStageStudyRecordDao.getByDate(
+      DateTime.now(),
+    )).singleWhere((item) => item.stage == StudyStage.freePlayer);
+    expect(stageRecord.studyTimeMilliseconds, greaterThanOrEqualTo(1000));
+    expect(
+      stageRecord.inputTimeMilliseconds,
+      stageRecord.studyTimeMilliseconds,
+    );
+    expect(await database.learnedWordFormDao.countAll(), 2);
   });
 
   test('releaseFromScreen 后迟到的底层播放事件不再污染状态且 backend 保留', () async {

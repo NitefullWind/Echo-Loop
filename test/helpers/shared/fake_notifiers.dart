@@ -2330,6 +2330,12 @@ class FakeStudyTimeService implements StudyTimeService {
     StudyStage? stage,
   }) async {}
   @override
+  Future<void> addStudyDuration(
+    Duration duration, {
+    DateTime? date,
+    StudyStage? stage,
+  }) async {}
+  @override
   Future<int> getStudyStreak({DateTime? now}) async => 0;
   @override
   Future<List<int>> getWeeklyStudyTimes({DateTime? now}) async =>
@@ -2359,6 +2365,12 @@ class FakeStudyTimeService implements StudyTimeService {
     StudyStage? stage,
   }) async {}
   @override
+  Future<void> addInputDuration(
+    Duration duration, {
+    DateTime? date,
+    StudyStage? stage,
+  }) async {}
+  @override
   Future<List<int>> getWeeklyInputTimes({DateTime? now}) async =>
       List.filled(7, 0);
   @override
@@ -2368,6 +2380,12 @@ class FakeStudyTimeService implements StudyTimeService {
   @override
   Future<void> addOutputTime(
     int seconds, {
+    DateTime? date,
+    StudyStage? stage,
+  }) async {}
+  @override
+  Future<void> addOutputDuration(
+    Duration duration, {
     DateTime? date,
     StudyStage? stage,
   }) async {}

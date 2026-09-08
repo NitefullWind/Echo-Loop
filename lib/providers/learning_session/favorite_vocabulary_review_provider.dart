@@ -189,6 +189,7 @@ class FavoriteVocabularyReview extends _$FavoriteVocabularyReview {
     _studySessionTimer = StudySessionTimer(
       studyTimeService: ref.read(studyTimeServiceProvider),
       stage: StudyStage.savedVocabularyReview,
+      activityGate: ref.read(studyActivityGateProvider),
       logScope: 'SavedVocabularyReviewTimer',
     );
     _studySessionTimer!.start();

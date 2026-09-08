@@ -369,6 +369,7 @@ IconData _stageIcon(StudyStage stage) => switch (stage) {
   StudyStage.reviewDifficultPractice => Icons.fitness_center,
   StudyStage.savedSentencesReview => Icons.subject,
   StudyStage.savedVocabularyReview => Icons.menu_book_outlined,
+  StudyStage.freePlayer => Icons.headphones_outlined,
 };
 
 /// 阶段对应的 i18n 名称
@@ -380,6 +381,7 @@ String _stageName(StudyStage stage, AppLocalizations l10n) => switch (stage) {
   StudyStage.reviewDifficultPractice => l10n.stageReviewDifficultPractice,
   StudyStage.savedSentencesReview => l10n.stageBookmarkReview,
   StudyStage.savedVocabularyReview => l10n.stageFlashcard,
+  StudyStage.freePlayer => l10n.freePlay,
 };
 
 /// 格式化时长显示
