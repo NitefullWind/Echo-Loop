@@ -44,6 +44,39 @@ class SentenceTracker {
     return -1;
   }
 
+  /// 找出播放位置从 [previousPosition] 前进到 [currentPosition] 期间自然结束的句子。
+  ///
+  /// 区间左侧不包含、右侧包含，因此同一个句尾不会因为位置事件重复统计；使用二分
+  /// 查找避免长字幕在每次 position 事件中从头扫描。
+  static List<Sentence> findSentencesCompletedBetween(
+    List<Sentence> sentences,
+    Duration previousPosition,
+    Duration currentPosition,
+  ) {
+    if (sentences.isEmpty || currentPosition <= previousPosition) {
+      return const <Sentence>[];
+    }
+
+    final first = _firstEndingAfter(sentences, previousPosition);
+    final end = _firstEndingAfter(sentences, currentPosition);
+    if (first >= end) return const <Sentence>[];
+    return List<Sentence>.unmodifiable(sentences.sublist(first, end));
+  }
+
+  static int _firstEndingAfter(List<Sentence> sentences, Duration position) {
+    var left = 0;
+    var right = sentences.length;
+    while (left < right) {
+      final middle = (left + right) ~/ 2;
+      if (sentences[middle].endTime <= position) {
+        left = middle + 1;
+      } else {
+        right = middle;
+      }
+    }
+    return left;
+  }
+
   /// 找到最接近的书签句子
   static int? findClosestBookmark(
     List<Sentence> bookmarkedSentences,

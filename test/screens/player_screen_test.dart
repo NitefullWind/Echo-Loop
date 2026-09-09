@@ -73,6 +73,13 @@ class _RecordingListeningPractice extends TestListeningPractice {
   /// 记录 PageView 翻页触发的选句调用（含全局下标与是否起播）。
   final List<({int index, bool autoPlay})> selectFullCalls = [];
   final List<({int index, bool autoPlay})> selectBookmarkCalls = [];
+  int pauseCalls = 0;
+
+  @override
+  Future<void> pause() async {
+    pauseCalls += 1;
+    state = state.copyWith(isPlaying: false);
+  }
 
   @override
   Future<void> selectFullSentence(int index, {bool autoPlay = true}) async {
@@ -1063,6 +1070,31 @@ void main() {
         expect(player.selectBookmarkCalls.last, (index: 0, autoPlay: false));
         expect(player.state.currentBookmarkIndex, 0);
         await _disposeTree(tester);
+      });
+
+      testWidgets('退出随心听时暂停播放', (tester) async {
+        final item = createTestAudioItem();
+        final player = _RecordingListeningPractice(
+          ListeningPracticeState(
+            currentAudioItem: item,
+            isPlaying: true,
+            sentences: createTestSentences(count: 2),
+            currentFullIndex: 0,
+          ),
+        );
+
+        await tester.pumpWidget(
+          createTestScreen(
+            const PlayerScreen(),
+            overrides: _recordingOverrides(player),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await _disposeTree(tester);
+
+        expect(player.pauseCalls, 1);
+        expect(player.state.isPlaying, isFalse);
       });
     });
   });

@@ -41,6 +41,9 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
   int _playbackGen = 0;
   int _playbackSessionId = -1;
   bool _activeSentenceDrivenPlayback = false;
+
+  /// 连续整篇播放的统计游标；它只记录本次播放会话已经跨过的句尾。
+  Duration? _lastGaplessStatsPosition;
   bool _awaitingReplayFromStart = false;
   Duration? _pauseAfterPosition;
   bool _autoSaving = false;
@@ -119,6 +122,41 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
     if (state.isPlaying) return;
     state = state.copyWith(isPlaying: playing);
     _setStudyPlaybackActive(true);
+  }
+
+  /// 记录连续播放位置前进期间自然结束的字幕句子。
+  ///
+  /// 计时器独立负责听力时长；这里仅复用句子统计入口写入听到的词数和唯一词形。
+  /// 位置倒退表示 seek 或回卷，重置游标而不把跳过的内容算作听到。
+  void _recordGaplessStatsThrough(Duration position) {
+    if (_activeSentenceDrivenPlayback || state.sentences.isEmpty) return;
+
+    final previous = _lastGaplessStatsPosition;
+    if (previous == null) {
+      _lastGaplessStatsPosition = position;
+      return;
+    }
+    if (position <= previous) {
+      if (position < previous) _lastGaplessStatsPosition = position;
+      return;
+    }
+
+    final gate = ref.read(studyActivityGateProvider);
+    _lastGaplessStatsPosition = position;
+    if (!gate.isForeground) return;
+
+    final completed = SentenceTracker.findSentencesCompletedBetween(
+      state.sentences,
+      previous,
+      position,
+    );
+    for (final sentence in completed) {
+      _recordCompletedSentenceStatistics(sentence);
+    }
+  }
+
+  void _resetGaplessStatsPosition(Duration position) {
+    _lastGaplessStatsPosition = position;
   }
 
   /// 将播放器置为停止态；学习页面会话由页面退出时统一结束。
@@ -365,6 +403,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
     if (!_positionUpdatesEnabled) return;
     state = state.copyWith(position: position);
     if (!_engine.isActiveSession(_playbackSessionId)) return;
+    if (_engine.isPlaying) _recordGaplessStatsThrough(position);
     final pauseAfterPosition = _pauseAfterPosition;
     if (_engine.isPlaying &&
         pauseAfterPosition != null &&
@@ -482,6 +521,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
       'pause tap: item=${state.audioItem?.id} session=$_playbackSessionId '
           'engineSession=${_engine.currentSessionId}',
     );
+    _recordGaplessStatsThrough(_engine.currentPosition);
     _playbackGen++;
     _activeSentenceDrivenPlayback = false;
     _awaitingReplayFromStart = false;
@@ -546,6 +586,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
     }
 
     await _engine.seek(target);
+    _resetGaplessStatsPosition(_engine.currentPosition);
     await _pausePlaying();
     state = state.copyWith(position: target, sentenceRepeatsDone: 0);
     if (wasPlaying) unawaited(play(resetWholeLoops: false));
@@ -909,6 +950,10 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
 
   /// 统一释放页面拥有的媒体资源；加载取消与正常退出仅在断点保存上不同。
   Future<void> _releaseFromScreen({required bool saveProgress}) async {
+    final engineBeforeRelease = _engineCache;
+    if (engineBeforeRelease != null) {
+      _recordGaplessStatsThrough(engineBeforeRelease.currentPosition);
+    }
     _loadGeneration++;
     _released = true;
     _loadReady = false;
@@ -974,6 +1019,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
       await _engine.seek(_playable[pos].startTime);
       state = state.copyWith(position: _playable[pos].startTime);
     }
+    _resetGaplessStatsPosition(_engine.currentPosition);
     _playbackSessionId = _engine.currentSessionId;
   }
 
@@ -1038,6 +1084,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
         state = state.copyWith(position: target.startTime);
       }
     }
+    _resetGaplessStatsPosition(_engine.currentPosition);
     _setPlaying(true);
     AppLogger.log(
       'MediaPlayback',
@@ -1048,6 +1095,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
       if (gen != _playbackGen || !_engine.isActiveSession(_playbackSessionId)) {
         return;
       }
+      _recordGaplessStatsThrough(state.duration ?? _engine.currentPosition);
       final done = state.wholeLoopsDone + 1;
       state = state.copyWith(wholeLoopsDone: done);
       final settings = state.settings;
@@ -1062,6 +1110,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
       _autoSaveProgress();
       await _delay(settings.wholeInterval);
       await _engine.seek(Duration.zero);
+      _resetGaplessStatsPosition(_engine.currentPosition);
       state = state.copyWith(position: Duration.zero);
     }
   }

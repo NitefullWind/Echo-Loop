@@ -87,6 +87,9 @@ class ListeningPractice extends _$ListeningPractice {
   /// 句级模式下由协程消费，provider 的全局 playerState 监听必须忽略，避免双推进。
   bool _activeSentenceDrivenPlayback = false;
 
+  /// 连续整篇播放的统计游标；它只记录本次播放会话已经跨过的句尾。
+  Duration? _lastGaplessStatsPosition;
+
   /// 当前是否处于句间 / 整篇循环间隔。
   ///
   /// 停顿仍属于刚播完的当前播放单元；此时「上一句」应先重播当前句，而不是按索引
@@ -348,6 +351,7 @@ class ListeningPractice extends _$ListeningPractice {
   void _onPositionChanged(Duration absolutePosition) {
     if (!_engine.isActiveSession(_playbackSessionId)) return;
     if (!_engine.isPlaying) return;
+    _recordGaplessStatsThrough(absolutePosition);
     if (_activeSentenceDrivenPlayback) return;
     // 延迟暂停：记下推进前的当前句，跨句边界即「当前句已播完」。
     final indexBeforeAdvance = state.currentFullIndex;
@@ -454,6 +458,41 @@ class ListeningPractice extends _$ListeningPractice {
     _setStudyPlaybackActive(playing);
   }
 
+  /// 记录连续播放位置前进期间自然结束的字幕句子。
+  ///
+  /// 计时器独立负责听力时长；这里仅复用句子统计入口写入听到的词数和唯一词形。
+  /// 位置倒退表示 seek 或回卷，重置游标而不把跳过的内容算作听到。
+  void _recordGaplessStatsThrough(Duration position) {
+    if (_activeSentenceDrivenPlayback || state.sentences.isEmpty) return;
+
+    final previous = _lastGaplessStatsPosition;
+    if (previous == null) {
+      _lastGaplessStatsPosition = position;
+      return;
+    }
+    if (position <= previous) {
+      if (position < previous) _lastGaplessStatsPosition = position;
+      return;
+    }
+
+    final gate = ref.read(studyActivityGateProvider);
+    _lastGaplessStatsPosition = position;
+    if (!gate.isForeground) return;
+
+    final completed = SentenceTracker.findSentencesCompletedBetween(
+      state.sentences,
+      previous,
+      position,
+    );
+    for (final sentence in completed) {
+      _recordCompletedSentenceStatistics(sentence);
+    }
+  }
+
+  void _resetGaplessStatsPosition(Duration position) {
+    _lastGaplessStatsPosition = position;
+  }
+
   /// 启动整篇连续播放的确定性循环（gapless）。
   ///
   /// [startPos] 非空：把真相源对齐到该句并 seek 到句首后起播（全新起播 / 模型交接）；
@@ -497,6 +536,8 @@ class ListeningPractice extends _$ListeningPractice {
       _autoSaveProgress();
     }
 
+    _resetGaplessStatsPosition(_engine.currentPosition);
+
     _setLogicalPlaying(true);
     final s = state.settings;
     AppLogger.log(
@@ -528,6 +569,9 @@ class ListeningPractice extends _$ListeningPractice {
         );
         return;
       }
+
+      final endPosition = _engine.totalDuration ?? _engine.currentPosition;
+      _recordGaplessStatsThrough(endPosition);
 
       _wholeLoopsDone += 1;
       _autoSaveProgress();
@@ -586,6 +630,7 @@ class ListeningPractice extends _$ListeningPractice {
         );
       }
       await _engine.seek(first.startTime);
+      _resetGaplessStatsPosition(_engine.currentPosition);
       _autoSaveProgress();
     }
   }
@@ -757,7 +802,7 @@ class ListeningPractice extends _$ListeningPractice {
     }
   }
 
-  /// 仅在按句播放自然完成后写入输入统计；连续整篇播放的总时长由计时器负责。
+  /// 在按句或连续整篇播放自然完成后写入输入统计；连续整篇播放的总时长仍由计时器负责。
   ///
   /// 统计提交必须不阻塞播放循环，写入失败由统一记录器捕获并输出诊断日志。
   void _recordCompletedSentenceStatistics(Sentence sentence) {
@@ -1150,6 +1195,7 @@ class ListeningPractice extends _$ListeningPractice {
   }
 
   Future<void> pause() async {
+    _recordGaplessStatsThrough(_engine.currentPosition);
     _playbackGen++;
     _awaitingReplayFromStart = false;
     // 句级循环正在驱动时暂停 → 续播保留遍数；任何待定的延迟暂停被立即暂停取代。
@@ -1176,6 +1222,7 @@ class ListeningPractice extends _$ListeningPractice {
   }
 
   Future<void> stop() async {
+    _recordGaplessStatsThrough(_engine.currentPosition);
     _playbackGen++;
     _awaitingReplayFromStart = false;
     _sentenceLoopResumePending = false;
@@ -1188,6 +1235,7 @@ class ListeningPractice extends _$ListeningPractice {
 
   Future<void> seek(Duration position) async {
     await _engine.seek(position);
+    _resetGaplessStatsPosition(_engine.currentPosition);
   }
 
   /// 离开讲解页返回后，把共享引擎显式对齐回当前句起点。
@@ -1210,6 +1258,7 @@ class ListeningPractice extends _$ListeningPractice {
     if (state.sentences.isEmpty) {
       await _engine.clearClip();
       await _engine.seek(absolutePosition);
+      _resetGaplessStatsPosition(_engine.currentPosition);
       return;
     }
 
@@ -1265,6 +1314,7 @@ class ListeningPractice extends _$ListeningPractice {
     await _engine.clearClip();
 
     await _engine.seek(target);
+    _resetGaplessStatsPosition(_engine.currentPosition);
     _sentenceRepeatsDone = 0;
     _wholeLoopsDone = 0;
 

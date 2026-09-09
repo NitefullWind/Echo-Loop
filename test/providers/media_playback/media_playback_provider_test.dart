@@ -119,12 +119,12 @@ void main() {
     return controller;
   }
 
-  Future<void> waitForSentenceStatistics() async {
+  Future<void> waitForSentenceStatistics({int minimumWords = 2}) async {
     for (var attempt = 0; attempt < 20; attempt += 1) {
       final record = await database.dailyStudyRecordDao.getByDate(
         DateTime.now(),
       );
-      if ((record?.inputWords ?? 0) >= 2) return;
+      if ((record?.inputWords ?? 0) >= minimumWords) return;
       await Future<void>.delayed(Duration.zero);
     }
     fail('Timed out waiting for asynchronous sentence statistics write.');
@@ -723,6 +723,27 @@ void main() {
       lessThanOrEqualTo(stageRecord.studyTimeMilliseconds),
     );
     expect(await database.learnedWordFormDao.countAll(), 2);
+  });
+
+  test('连续媒体播放自然完成后异步记录所有已听句子的词数和词汇', () async {
+    final controller = await loadController();
+    final studyPageGeneration = controller.beginStudyPage();
+
+    unawaited(controller.play());
+    await waitUntil(() => backend.playCalls == 1);
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    backend.emitPosition(const Duration(seconds: 120));
+    backend.emitCompleted();
+
+    await waitForSentenceStatistics(minimumWords: 8);
+    await controller.endStudyPage(studyPageGeneration);
+    await container.read(studyTimeServiceProvider).flush();
+    await waitForStudyDuration();
+    await container.read(learnedVocabularyTrackerProvider).flush();
+
+    final record = await database.dailyStudyRecordDao.getByDate(DateTime.now());
+    expect(record?.inputWords, 8);
+    expect(await database.learnedWordFormDao.countAll(), 5);
   });
 
   test('releaseFromScreen 后迟到的底层播放事件不再污染状态且 backend 保留', () async {

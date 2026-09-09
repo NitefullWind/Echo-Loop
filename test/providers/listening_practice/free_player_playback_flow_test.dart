@@ -274,6 +274,7 @@ void main() {
   /// 模拟整篇 gapless 一遍自然播完（解析 [_FlowAudioEngine.playToEnd] 的挂起）。
   /// 不强制设回 isPlaying——续播是否发生由协程的 play() 决定。
   Future<void> completeWhole() async {
+    engine.emitPosition(sentences.last.endTime);
     engine.emitCompleted();
     await flushBoundary();
   }
@@ -444,7 +445,7 @@ void main() {
     expect(await database.learnedWordFormDao.countAll(), 2);
   });
 
-  test('连续播放自然完成后记录总时长和听力时长但不写入按句统计', () async {
+  test('连续播放自然完成后记录总时长、听力时长、词数和词汇', () async {
     await useRecordingStatisticsRecorder();
     lp.seed(sentences: sentences, settings: const PlaybackSettings());
 
@@ -454,9 +455,14 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     final database = statisticsDatabase;
+    final service = statisticsService;
     if (database == null) {
       throw StateError('Statistics recorder test fixture is unavailable.');
     }
+    if (service == null) {
+      throw StateError('Statistics service test fixture is unavailable.');
+    }
+    await service.flush();
 
     final record = await database.dailyStudyRecordDao.getByDate(DateTime.now());
     expect(record, isNotNull);
@@ -465,7 +471,8 @@ void main() {
       record?.inputTimeMilliseconds,
       lessThanOrEqualTo(record?.studyTimeMilliseconds ?? 0),
     );
-    expect(record?.inputWords, 0);
+    expect(record?.inputWords, 16);
+    expect(await database.learnedWordFormDao.countAll(), 14);
   });
 
   test('外部暂停会回写逻辑播放态且保留当前播放会话', () async {

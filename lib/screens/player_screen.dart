@@ -78,6 +78,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   @override
   void dispose() {
     scheduleMicrotask(() async {
+      // 随心听页面退出后 controller 仍由 keep-alive provider 持有，必须先暂停
+      // 共享音频引擎，避免页面销毁后音频继续播放。
+      await _notifier.pause();
       await _notifier.endStudyPage(_studyPageGeneration);
       await _notifier.saveCurrentPlaybackState();
     });

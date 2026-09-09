@@ -224,5 +224,40 @@ void main() {
         expect(result, 0);
       });
     });
+
+    group('findSentencesCompletedBetween', () {
+      test('返回区间内所有自然结束的句子并包含右边界', () {
+        final sentences = createSentencesWithGaps();
+
+        final result = SentenceTracker.findSentencesCompletedBetween(
+          sentences,
+          const Duration(seconds: 2),
+          const Duration(seconds: 10),
+        );
+
+        expect(result.map((sentence) => sentence.index), [0, 1]);
+      });
+
+      test('相同位置或倒退位置不重复返回句子', () {
+        final sentences = createSentences(3);
+
+        expect(
+          SentenceTracker.findSentencesCompletedBetween(
+            sentences,
+            const Duration(seconds: 5),
+            const Duration(seconds: 5),
+          ),
+          isEmpty,
+        );
+        expect(
+          SentenceTracker.findSentencesCompletedBetween(
+            sentences,
+            const Duration(seconds: 10),
+            const Duration(seconds: 4),
+          ),
+          isEmpty,
+        );
+      });
+    });
   });
 }
