@@ -1049,7 +1049,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     try {
       // Step 1: 关闭旧数据库（避免 Drift "multiple databases" 警告）
-      await closeCurrentDatabase();
+      await closeCurrentDatabase(
+        studyTimeService: ref.read(studyTimeServiceProvider),
+      );
 
       if (enabled) {
         // Step 2a: 创建并 seed demo 库（幂等）

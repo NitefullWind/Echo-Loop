@@ -20,6 +20,7 @@ import '../widgets/common/paragraph_sentence_list_card.dart';
 import '../widgets/common/audio_app_bar_title.dart';
 import '../widgets/common/free_player_sentence_pager.dart';
 import '../widgets/player_hotkey_scope.dart';
+import '../widgets/study/study_activity_detector.dart';
 import '../widgets/dictionary/dictionary_panel_host.dart';
 import 'sentence_detail_screen.dart';
 
@@ -38,6 +39,7 @@ class PlayerScreen extends ConsumerStatefulWidget {
 class _PlayerScreenState extends ConsumerState<PlayerScreen>
     with SingleTickerProviderStateMixin {
   late final ListeningPractice _notifier;
+  late final int _studyPageGeneration;
 
   late TabController _tabController;
   int _previousTabIndex = 0;
@@ -51,6 +53,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   void initState() {
     super.initState();
     _notifier = ref.read(listeningPracticeProvider.notifier);
+    _studyPageGeneration = _notifier.beginStudyPage();
     _tabController = TabController(length: 2, vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // 自愈：每次进入播放页夺回锁屏控制（学习/复习任务离开时会把全局回调槽置 null），
@@ -75,7 +78,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   @override
   void dispose() {
     scheduleMicrotask(() async {
-      await _notifier.pause();
+      await _notifier.endStudyPage(_studyPageGeneration);
       await _notifier.saveCurrentPlaybackState();
     });
     _tabController.dispose();
@@ -88,28 +91,31 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final playerState = ref.watch(listeningPracticeProvider);
     final controller = ref.read(listeningPracticeProvider.notifier);
 
-    return LearningHotkeyScope(
-      onPlayPause: () =>
-          playerState.isPlaying ? controller.pause() : controller.play(),
-      onPrevious: () {
-        if (playerState.hasSentences) controller.previousSentence();
-      },
-      onNext: () {
-        if (playerState.hasSentences) controller.nextSentence();
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          titleSpacing: 0,
-          title: _buildAppBarTitle(playerState, l10n),
-          actions: const [SleepTimerButton()],
-        ),
-        // 词典面板宿主：面板内嵌 body、非 modal（显示期间正文可继续点词）。
-        // 页面自身无 PopScope，由宿主代管返回键（面板开着时先关面板）。
-        body: DictionaryPanelHost(
-          handleBackButton: true,
-          child: !playerState.hasAudio
-              ? Center(child: Text(l10n.noAudioLoaded))
-              : _buildLayout(context, playerState),
+    return StudyActivityDetector(
+      onActivity: controller.markStudyActivity,
+      child: LearningHotkeyScope(
+        onPlayPause: () =>
+            playerState.isPlaying ? controller.pause() : controller.play(),
+        onPrevious: () {
+          if (playerState.hasSentences) controller.previousSentence();
+        },
+        onNext: () {
+          if (playerState.hasSentences) controller.nextSentence();
+        },
+        child: Scaffold(
+          appBar: AppBar(
+            titleSpacing: 0,
+            title: _buildAppBarTitle(playerState, l10n),
+            actions: const [SleepTimerButton()],
+          ),
+          // 词典面板宿主：面板内嵌 body、非 modal（显示期间正文可继续点词）。
+          // 页面自身无 PopScope，由宿主代管返回键（面板开着时先关面板）。
+          body: DictionaryPanelHost(
+            handleBackButton: true,
+            child: !playerState.hasAudio
+                ? Center(child: Text(l10n.noAudioLoaded))
+                : _buildLayout(context, playerState),
+          ),
         ),
       ),
     );

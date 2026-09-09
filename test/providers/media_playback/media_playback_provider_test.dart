@@ -682,6 +682,7 @@ void main() {
 
   test('按句媒体播放自然完成后异步记录学习统计', () async {
     final controller = await loadController();
+    final studyPageGeneration = controller.beginStudyPage();
     await controller.updateSettings(
       container
           .read(mediaPlaybackProvider)
@@ -701,12 +702,17 @@ void main() {
     backend.emitPosition(const Duration(seconds: 50));
     await waitForSentenceStatistics();
     await controller.pause();
+    await controller.endStudyPage(studyPageGeneration);
     await waitForStudyDuration();
     await container.read(learnedVocabularyTrackerProvider).flush();
 
     final record = await database.dailyStudyRecordDao.getByDate(DateTime.now());
     expect(record?.studyTimeMilliseconds, greaterThanOrEqualTo(1000));
-    expect(record?.inputTimeMilliseconds, record?.studyTimeMilliseconds);
+    expect(record?.inputTimeMilliseconds, greaterThanOrEqualTo(1000));
+    expect(
+      record?.inputTimeMilliseconds,
+      lessThanOrEqualTo(record?.studyTimeMilliseconds ?? 0),
+    );
     expect(record?.inputWords, 2);
     final stageRecord = (await database.dailyStageStudyRecordDao.getByDate(
       DateTime.now(),
@@ -714,7 +720,7 @@ void main() {
     expect(stageRecord.studyTimeMilliseconds, greaterThanOrEqualTo(1000));
     expect(
       stageRecord.inputTimeMilliseconds,
-      stageRecord.studyTimeMilliseconds,
+      lessThanOrEqualTo(stageRecord.studyTimeMilliseconds),
     );
     expect(await database.learnedWordFormDao.countAll(), 2);
   });
@@ -736,6 +742,17 @@ void main() {
     expect(state.isPlaying, isFalse);
     expect(state.position, Duration.zero);
     expect(backend.disposed, isFalse);
+  });
+
+  test('旧页面 token 不能释放新页面的媒体会话', () async {
+    final controller = await loadController();
+    final oldPage = controller.beginStudyPage();
+    final newPage = controller.beginStudyPage();
+
+    await controller.releaseFromScreen(studyPageGeneration: oldPage);
+
+    expect(router.isRouted, isTrue);
+    await controller.endStudyPage(newPage);
   });
 
   test('MediaEngine 被学习模式释放后，同一媒体再次进入会重新加载', () async {

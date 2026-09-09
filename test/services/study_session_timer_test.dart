@@ -1,11 +1,33 @@
 import 'package:drift/native.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/widgets.dart';
+import 'package:clock/clock.dart';
 import 'package:echo_loop/database/app_database.dart';
 import 'package:echo_loop/models/study_stage.dart';
 import 'package:echo_loop/services/study_activity_gate.dart';
 import 'package:echo_loop/services/study_session_timer.dart';
 import 'package:echo_loop/services/study_time_service.dart';
+import 'package:echo_loop/services/app_logger.dart';
+
+class _RecordingStudyTimeService extends StudyTimeService {
+  _RecordingStudyTimeService(AppDatabase db)
+    : super(db.dailyStudyRecordDao, db.dailyStageStudyRecordDao);
+
+  final List<Duration> recordedStudy = <Duration>[];
+  final List<Duration> recordedInput = <Duration>[];
+
+  @override
+  Future<void> recordSessionDurations({
+    required Duration studyDuration,
+    Duration inputDuration = Duration.zero,
+    required StudyStage stage,
+    DateTime? date,
+  }) async {
+    recordedStudy.add(studyDuration);
+    recordedInput.add(inputDuration);
+  }
+}
 
 void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
@@ -46,7 +68,7 @@ void main() {
     await timer.dispose();
   });
 
-  test('可选地将前台播放时长同步记为输入时长', () async {
+  test('播放时长单独计入输入时长', () async {
     final timer = StudySessionTimer(
       studyTimeService: StudyTimeService(
         db.dailyStudyRecordDao,
@@ -54,16 +76,21 @@ void main() {
       ),
       stage: StudyStage.freePlayer,
       activityGate: activityGate,
-      recordInputDuration: true,
     );
 
     timer.start();
+    timer.setPlaybackActive(true);
     await Future<void>.delayed(const Duration(milliseconds: 1100));
+    timer.setPlaybackActive(false);
     await timer.stop();
 
     final record = await db.dailyStudyRecordDao.getByDate(DateTime.now());
     expect(record?.studyTimeMilliseconds, greaterThanOrEqualTo(1000));
-    expect(record?.inputTimeMilliseconds, record?.studyTimeMilliseconds);
+    expect(record?.inputTimeMilliseconds, greaterThanOrEqualTo(1000));
+    expect(
+      record?.inputTimeMilliseconds,
+      lessThanOrEqualTo(record?.studyTimeMilliseconds ?? 0),
+    );
     await timer.dispose();
   });
 
@@ -120,7 +147,7 @@ void main() {
     await timer.dispose();
   });
 
-  test('手动暂停后切回前台不会自动恢复，显式 resume 后才继续计时', () async {
+  test('播放暂停后仍可统计用户思考时间，但不增加输入时长', () async {
     final timer = StudySessionTimer(
       studyTimeService: StudyTimeService(
         db.dailyStudyRecordDao,
@@ -128,25 +155,117 @@ void main() {
       ),
       stage: StudyStage.freePlayer,
       activityGate: activityGate,
+      idleTimeout: const Duration(seconds: 2),
     );
 
     timer.start();
+    timer.setPlaybackActive(true);
     await Future<void>.delayed(const Duration(milliseconds: 100));
-    await timer.pause();
-    final elapsedWhilePaused = timer.elapsed;
-
-    binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-    binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-    binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    timer.setPlaybackActive(false);
+    final elapsedAfterPlayback = timer.elapsed;
     await Future<void>.delayed(const Duration(milliseconds: 100));
 
-    expect(timer.elapsed, elapsedWhilePaused);
-
-    timer.resume();
-    await Future<void>.delayed(const Duration(milliseconds: 100));
-    expect(timer.elapsed, greaterThan(elapsedWhilePaused));
+    expect(timer.elapsed, greaterThan(elapsedAfterPlayback));
+    expect(timer.inputElapsed, lessThan(timer.elapsed));
 
     await timer.dispose();
+  });
+
+  test('超过 idle timeout 后暂停，新的用户活动恢复同一会话', () {
+    fakeAsync((async) {
+      withClock(async.getClock(DateTime(2026, 9, 8)), () {
+        AppLogger.instance.clear();
+        final service = _RecordingStudyTimeService(db);
+        final timer = StudySessionTimer(
+          studyTimeService: service,
+          stage: StudyStage.freePlayer,
+          activityGate: activityGate,
+          checkpointInterval: const Duration(seconds: 10),
+          idleTimeout: const Duration(seconds: 2),
+        );
+
+        timer.start();
+        async.elapse(const Duration(seconds: 3));
+        async.flushMicrotasks();
+        expect(timer.isRunning, isFalse);
+
+        timer.markActivity();
+        async.elapse(const Duration(seconds: 1));
+        async.flushMicrotasks();
+        expect(timer.isRunning, isTrue);
+        expect(
+          AppLogger.instance.entries.any(
+            (entry) =>
+                entry.tag == 'StudySessionTimer' &&
+                entry.message.contains('session.activity') &&
+                entry.message.contains('resumedFromIdle=true'),
+          ),
+          isTrue,
+        );
+
+        final stop = timer.stop();
+        async.flushMicrotasks();
+        var stopCompleted = false;
+        stop.then((_) => stopCompleted = true);
+        async.flushMicrotasks();
+        expect(stopCompleted, isTrue);
+        expect(
+          service.recordedStudy.fold<int>(
+            0,
+            (sum, duration) => sum + duration.inMilliseconds,
+          ),
+          3000,
+        );
+        final dispose = timer.dispose();
+        async.flushMicrotasks();
+        var disposeCompleted = false;
+        dispose.then((_) => disposeCompleted = true);
+        async.flushMicrotasks();
+        expect(disposeCompleted, isTrue);
+      });
+    });
+  });
+
+  test('fake clock 下 checkpoint 与 stop 串行且不重复写入', () {
+    fakeAsync((async) {
+      withClock(async.getClock(DateTime(2026, 9, 8)), () {
+        final service = _RecordingStudyTimeService(db);
+        final timer = StudySessionTimer(
+          studyTimeService: service,
+          stage: StudyStage.freePlayer,
+          activityGate: activityGate,
+          checkpointInterval: const Duration(seconds: 2),
+        );
+        timer.start();
+        async.elapse(const Duration(seconds: 5));
+        async.flushMicrotasks();
+        final stop = timer.stop();
+        async.flushMicrotasks();
+        expect(
+          service.recordedStudy.fold<int>(
+            0,
+            (sum, duration) => sum + duration.inMilliseconds,
+          ),
+          5000,
+        );
+        expect(timer.elapsed, const Duration(seconds: 5));
+        final dispose = timer.dispose();
+        async.flushMicrotasks();
+        expect(
+          service.recordedStudy.fold<int>(
+            0,
+            (sum, duration) => sum + duration.inMilliseconds,
+          ),
+          5000,
+        );
+        var stopCompleted = false;
+        var disposeCompleted = false;
+        stop.then((_) => stopCompleted = true);
+        dispose.then((_) => disposeCompleted = true);
+        async.flushMicrotasks();
+        expect(stopCompleted, isTrue);
+        expect(disposeCompleted, isTrue);
+      });
+    });
   });
 }

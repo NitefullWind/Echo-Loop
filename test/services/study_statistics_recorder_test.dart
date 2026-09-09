@@ -62,7 +62,7 @@ void main() {
       DateTime.now(),
     )).single;
     expect(record?.inputTimeMilliseconds, 1000);
-    expect(record?.inputTimeSeconds, 0);
+    expect(record?.inputTimeSeconds, 1);
     expect(record?.inputWords, 2);
     expect(stage.inputTimeMilliseconds, 1000);
   });

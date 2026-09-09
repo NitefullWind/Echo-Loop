@@ -2336,28 +2336,9 @@ class FakeStudyTimeService implements StudyTimeService {
     StudyStage? stage,
   }) async {}
   @override
-  Future<int> getStudyStreak({DateTime? now}) async => 0;
-  @override
-  Future<List<int>> getWeeklyStudyTimes({DateTime? now}) async =>
-      List.filled(7, 0);
-  @override
-  Future<int> getWeekTotalStudyTime({DateTime? now}) async => 0;
-  @override
-  Future<int> getInputWords(DateTime date) async => 0;
-  @override
-  Future<int> getTodayInputWords() async => 0;
-  @override
   Future<void> addInputWords(int count, {DateTime? date}) async {}
   @override
-  Future<int> getOutputWords(DateTime date) async => 0;
-  @override
-  Future<int> getTodayOutputWords() async => 0;
-  @override
   Future<void> addOutputWords(int count, {DateTime? date}) async {}
-  @override
-  Future<int> getInputTime(DateTime date) async => 0;
-  @override
-  Future<int> getTodayInputTime() async => 0;
   @override
   Future<void> addInputTime(
     int seconds, {
@@ -2371,13 +2352,6 @@ class FakeStudyTimeService implements StudyTimeService {
     StudyStage? stage,
   }) async {}
   @override
-  Future<List<int>> getWeeklyInputTimes({DateTime? now}) async =>
-      List.filled(7, 0);
-  @override
-  Future<int> getOutputTime(DateTime date) async => 0;
-  @override
-  Future<int> getTodayOutputTime() async => 0;
-  @override
   Future<void> addOutputTime(
     int seconds, {
     DateTime? date,
@@ -2389,6 +2363,90 @@ class FakeStudyTimeService implements StudyTimeService {
     DateTime? date,
     StudyStage? stage,
   }) async {}
+  @override
+  Future<void> recordActiveDuration(
+    Duration duration, {
+    required StudyStage stage,
+    bool recordInputDuration = false,
+    DateTime? date,
+  }) async {}
+  @override
+  Future<void> recordSessionDurations({
+    required Duration studyDuration,
+    Duration inputDuration = Duration.zero,
+    required StudyStage stage,
+    DateTime? date,
+  }) async {}
+  @override
+  Future<void> recordSentencePlayback({
+    required Duration duration,
+    required String text,
+    required StudyStage stage,
+    bool recordInputDuration = true,
+    DateTime? date,
+  }) async {}
+  @override
+  Future<void> recordSpeechRecognition({
+    required Duration duration,
+    int producedWordCount = 0,
+    required StudyStage stage,
+    DateTime? date,
+  }) async {}
+  @override
+  Future<void> recordOutputWords(
+    int count, {
+    required StudyStage stage,
+    DateTime? date,
+  }) async {}
+  @override
+  void submitSentencePlayback({
+    required Duration duration,
+    required String text,
+    required StudyStage stage,
+    bool recordInputDuration = true,
+    DateTime? date,
+  }) {}
+  @override
+  void submitSpeechRecognition({
+    required Duration duration,
+    int producedWordCount = 0,
+    required StudyStage stage,
+    DateTime? date,
+  }) {}
+  @override
+  void submitOutputWords(
+    int count, {
+    required StudyStage stage,
+    DateTime? date,
+  }) {}
+  @override
+  Future<void> flush() async {}
+  @override
+  Future<int> getStudyStreak({DateTime? now}) async => 0;
+  @override
+  Future<List<int>> getWeeklyStudyTimes({DateTime? now}) async =>
+      List.filled(7, 0);
+  @override
+  Future<int> getWeekTotalStudyTime({DateTime? now}) async => 0;
+  @override
+  Future<int> getInputWords(DateTime date) async => 0;
+  @override
+  Future<int> getTodayInputWords() async => 0;
+  @override
+  Future<int> getOutputWords(DateTime date) async => 0;
+  @override
+  Future<int> getTodayOutputWords() async => 0;
+  @override
+  Future<int> getInputTime(DateTime date) async => 0;
+  @override
+  Future<int> getTodayInputTime() async => 0;
+  @override
+  Future<List<int>> getWeeklyInputTimes({DateTime? now}) async =>
+      List.filled(7, 0);
+  @override
+  Future<int> getOutputTime(DateTime date) async => 0;
+  @override
+  Future<int> getTodayOutputTime() async => 0;
   @override
   Future<List<int>> getWeeklyOutputTimes({DateTime? now}) async =>
       List.filled(7, 0);

@@ -8,10 +8,13 @@ void main() {
         id: 1,
         date: date,
         studyTimeSeconds: total,
+        studyTimeMilliseconds: total * 1000,
         inputWords: 0,
         outputWords: 0,
         inputTimeSeconds: input,
+        inputTimeMilliseconds: input * 1000,
         outputTimeSeconds: output,
+        outputTimeMilliseconds: output * 1000,
       );
 
   test('按周聚合并修正分段总和', () {

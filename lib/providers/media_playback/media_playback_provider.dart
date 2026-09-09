@@ -16,7 +16,6 @@ import '../../models/study_stage.dart';
 import '../../services/app_logger.dart';
 import '../../services/study_session_timer.dart';
 import '../../services/storage_service.dart';
-import '../../utils/word_counter.dart';
 import '../audio_engine/audio_engine_provider.dart';
 import '../listening_practice/bookmark_manager.dart';
 import '../favorite_sentence_lifecycle_provider.dart';
@@ -55,6 +54,8 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
   SenseGroupRangePlayback? _senseGroupRangePlayback;
   PlaybackStateDao? _playbackStateDaoCache;
   StudySessionTimer? _studySessionTimer;
+  int _studyPageGeneration = 0;
+  int? _activeStudyPageGeneration;
 
   MediaEngine get _engine {
     final cached = _engineCache;
@@ -64,22 +65,46 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
     return engine;
   }
 
-  /// 创建一次视频随心听前台学习计时会话；播放态结束后由统一入口停止。
-  void _startStudySessionTimer() {
-    if (_studySessionTimer != null) return;
-    final timer = StudySessionTimer(
-      studyTimeService: ref.read(studyTimeServiceProvider),
-      stage: StudyStage.freePlayer,
-      activityGate: ref.read(studyActivityGateProvider),
-      recordInputDuration: true,
-      logScope: 'FreePlayerMediaTimer',
-    );
-    _studySessionTimer = timer;
-    timer.start();
+  /// 建立视频随心听页面级学习会话；页面退出前播放器状态不会结束该会话。
+  int beginStudyPage() {
+    final generation = ++_studyPageGeneration;
+    _activeStudyPageGeneration = generation;
+    if (_studySessionTimer == null) {
+      final timer = StudySessionTimer(
+        studyTimeService: ref.read(studyTimeServiceProvider),
+        stage: StudyStage.freePlayer,
+        activityGate: ref.read(studyActivityGateProvider),
+        idleTimeout: const Duration(minutes: 2),
+        logScope: 'FreePlayerMediaTimer',
+      );
+      _studySessionTimer = timer;
+      timer.start();
+    } else {
+      _studySessionTimer?.markActivity();
+    }
+    _studySessionTimer?.setPlaybackActive(state.isPlaying);
+    return generation;
   }
 
-  /// 计时器拥有者是媒体播放 Provider，释放或暂停时立即落库并销毁会话。
-  Future<void> _stopStudySessionTimer() async {
+  /// 标记视频随心听页面上的用户活动。
+  void markStudyActivity() {
+    _studySessionTimer?.markActivity();
+  }
+
+  /// 将播放器活动状态同步给页面学习会话。
+  void _setStudyPlaybackActive(bool active) {
+    _studySessionTimer?.setPlaybackActive(active);
+  }
+
+  /// 结束指定页面会话；过期页面的异步清理不会关闭新页面会话。
+  Future<bool> endStudyPage(int generation) async {
+    if (_activeStudyPageGeneration != generation) return false;
+    await _endActiveStudyPage();
+    return true;
+  }
+
+  Future<void> _endActiveStudyPage() async {
+    _activeStudyPageGeneration = null;
     final timer = _studySessionTimer;
     _studySessionTimer = null;
     if (timer != null) await timer.dispose();
@@ -88,18 +113,24 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
   void _setPlaying(bool playing) {
     if (!playing) {
       state = state.copyWith(isPlaying: false);
-      unawaited(_stopStudySessionTimer());
+      _setStudyPlaybackActive(false);
       return;
     }
     if (state.isPlaying) return;
     state = state.copyWith(isPlaying: playing);
-    _startStudySessionTimer();
+    _setStudyPlaybackActive(true);
   }
 
-  /// 等待计时器最终落库，保证暂停、自然结束和页面释放不会遗失尾部时长。
+  /// 将播放器置为停止态；学习页面会话由页面退出时统一结束。
   Future<void> _stopPlaying() async {
     state = state.copyWith(isPlaying: false);
-    await _stopStudySessionTimer();
+    _setStudyPlaybackActive(false);
+  }
+
+  /// 普通暂停只暂停输入计时，保留页面学习会话供用户继续思考。
+  Future<void> _pausePlaying() async {
+    state = state.copyWith(isPlaying: false);
+    _setStudyPlaybackActive(false);
   }
 
   /// 当前媒体会话的意群区间播放器；随心听页面只通过该契约传递播放意图。
@@ -120,7 +151,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
       unawaited(_landscapeVideoSub?.cancel());
       unawaited(_videoAspectRatioSub?.cancel());
       final engine = _engineCache;
-      unawaited(_stopStudySessionTimer());
+      unawaited(_endActiveStudyPage());
       unawaited(_senseGroupRangePlayback?.cancel());
       engine?.setTransportHandlers(onPlay: null, onPause: null);
       unawaited(engine?.releaseForOwnerDispose());
@@ -455,7 +486,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
     _activeSentenceDrivenPlayback = false;
     _awaitingReplayFromStart = false;
     _pauseAfterPosition = null;
-    await _stopPlaying();
+    await _pausePlaying();
     await _engine.pause();
     _playbackSessionId = _engine.currentSessionId;
   }
@@ -515,7 +546,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
     }
 
     await _engine.seek(target);
-    await _stopPlaying();
+    await _pausePlaying();
     state = state.copyWith(position: target, sentenceRepeatsDone: 0);
     if (wasPlaying) unawaited(play(resetWholeLoops: false));
   }
@@ -849,7 +880,13 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
 
   Future<void>? _releaseInFlight;
 
-  Future<void> releaseFromScreen() async {
+  Future<void> releaseFromScreen({int? studyPageGeneration}) async {
+    if (studyPageGeneration != null) {
+      final ended = await endStudyPage(studyPageGeneration);
+      if (!ended) return;
+    } else {
+      await _endActiveStudyPage();
+    }
     await _releaseMedia(saveProgress: _loadReady);
   }
 
@@ -930,7 +967,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
     _activeSentenceDrivenPlayback = false;
     _awaitingReplayFromStart = false;
     _pauseAfterPosition = null;
-    await _stopPlaying();
+    await _pausePlaying();
     state = state.copyWith(sentenceRepeatsDone: 0);
     final pos = _currentPos;
     if (pos != null && pos >= 0 && pos < _playable.length) {
@@ -1158,16 +1195,14 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
   ///
   /// 不等待后台数据库写入，避免统计延迟影响媒体播放、循环或切句。
   void _recordCompletedSentenceStatistics(Sentence sentence) {
-    final recorder = ref.read(studyStatisticsRecorderProvider);
-    recorder.recordAsync(
-      recorder.recordSentencePlayback(
-        duration: sentence.duration,
-        heardWordCount: countWords(sentence.text),
-        text: sentence.text,
-        stage: StudyStage.freePlayer,
-        recordInputDuration: false,
-      ),
-    );
+    ref
+        .read(studyTimeServiceProvider)
+        .submitSentencePlayback(
+          duration: sentence.duration,
+          text: sentence.text,
+          stage: StudyStage.freePlayer,
+          recordInputDuration: false,
+        );
   }
 
   void _setCurrentFromSentence(Sentence sentence) {

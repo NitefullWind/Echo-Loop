@@ -21,8 +21,6 @@ import 'package:echo_loop/models/study_stage.dart';
 import 'package:echo_loop/providers/audio_engine/audio_engine_provider.dart';
 import 'package:echo_loop/providers/listening_practice/listening_practice_provider.dart';
 import 'package:echo_loop/services/app_logger.dart';
-import 'package:echo_loop/services/learned_vocabulary_tracker.dart';
-import 'package:echo_loop/services/study_statistics_recorder.dart';
 import 'package:echo_loop/services/study_activity_gate.dart';
 import 'package:echo_loop/services/study_time_service.dart';
 import '../../helpers/mock_providers.dart';
@@ -252,7 +250,8 @@ void main() {
   late _FlowListeningPractice lp;
   late StudyActivityGate activityGate;
   AppDatabase? statisticsDatabase;
-  LearnedVocabularyTracker? vocabularyTracker;
+  StudyTimeService? statisticsService;
+  int? studyPageGeneration;
 
   Future<void> flushBoundary() async {
     await Future<void>.delayed(Duration.zero);
@@ -290,7 +289,9 @@ void main() {
       );
       if ((record?.studyTimeMilliseconds ?? 0) >= 1000 &&
           (record?.inputWords ?? 0) >= 2 &&
-          record?.inputTimeMilliseconds == record?.studyTimeMilliseconds) {
+          (record?.inputTimeMilliseconds ?? 0) >= 1000 &&
+          (record?.inputTimeMilliseconds ?? 0) <=
+              (record?.studyTimeMilliseconds ?? 0)) {
         return;
       }
       await Future<void>.delayed(Duration.zero);
@@ -305,36 +306,35 @@ void main() {
 
     engine = _FlowAudioEngine();
     final database = AppDatabase(NativeDatabase.memory());
-    final tracker = LearnedVocabularyTracker(
-      persistWordForms: database.learnedWordFormDao.insertIfAbsentAll,
-      onStatsUpdated: () {},
-      flushDelay: Duration.zero,
-    );
     statisticsDatabase = database;
-    vocabularyTracker = tracker;
     activityGate = StudyActivityGate();
     final studyTimeService = StudyTimeService(
       database.dailyStudyRecordDao,
       database.dailyStageStudyRecordDao,
+      statisticsDao: database.studyStatisticsDao,
+      activityGate: activityGate,
     );
+    statisticsService = studyTimeService;
     container = ProviderContainer(
       overrides: [
         audioEngineProvider.overrideWith(() => engine),
         studyTimeServiceProvider.overrideWithValue(studyTimeService),
-        studyStatisticsRecorderProvider.overrideWithValue(
-          StudyStatisticsRecorder(
-            studyTimeService: studyTimeService,
-            activityGate: activityGate,
-            vocabularyTracker: tracker,
-          ),
-        ),
+        studyActivityGateProvider.overrideWithValue(activityGate),
         listeningPracticeProvider.overrideWith(() => _FlowListeningPractice()),
       ],
     );
     lp =
         container.read(listeningPracticeProvider.notifier)
             as _FlowListeningPractice;
+    studyPageGeneration = lp.beginStudyPage();
     await Future<void>.delayed(Duration.zero);
+  }
+
+  Future<void> finishStudyPage() async {
+    final generation = studyPageGeneration;
+    if (generation == null) return;
+    await lp.endStudyPage(generation);
+    studyPageGeneration = null;
   }
 
   setUp(() async {
@@ -345,12 +345,7 @@ void main() {
       overrides: [
         audioEngineProvider.overrideWith(() => engine),
         studyTimeServiceProvider.overrideWithValue(FakeStudyTimeService()),
-        studyStatisticsRecorderProvider.overrideWithValue(
-          StudyStatisticsRecorder(
-            studyTimeService: FakeStudyTimeService(),
-            activityGate: activityGate,
-          ),
-        ),
+        studyActivityGateProvider.overrideWithValue(activityGate),
         listeningPracticeProvider.overrideWith(() => _FlowListeningPractice()),
       ],
     );
@@ -361,10 +356,14 @@ void main() {
   });
 
   tearDown(() async {
+    final generation = studyPageGeneration;
+    if (generation != null) {
+      await lp.endStudyPage(generation);
+      studyPageGeneration = null;
+    }
     container.dispose();
     activityGate.dispose();
     await engine.closeStreams();
-    await vocabularyTracker?.dispose();
     await statisticsDatabase?.close();
   });
 
@@ -417,17 +416,22 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 1100));
     await completeClip();
     await lp.pause();
+    await finishStudyPage();
     await waitForInputStatistics();
-    final tracker = vocabularyTracker;
     final database = statisticsDatabase;
-    if (tracker == null || database == null) {
-      throw StateError('Statistics recorder test fixture is unavailable.');
+    final service = statisticsService;
+    if (service == null || database == null) {
+      throw StateError('Statistics service test fixture is unavailable.');
     }
-    await tracker.flush();
+    await service.flush();
 
     final record = await database.dailyStudyRecordDao.getByDate(DateTime.now());
     expect(record?.studyTimeMilliseconds, greaterThanOrEqualTo(1000));
-    expect(record?.inputTimeMilliseconds, record?.studyTimeMilliseconds);
+    expect(record?.inputTimeMilliseconds, greaterThanOrEqualTo(1000));
+    expect(
+      record?.inputTimeMilliseconds,
+      lessThanOrEqualTo(record?.studyTimeMilliseconds ?? 0),
+    );
     expect(record?.inputWords, 2);
     final stageRecord = (await database.dailyStageStudyRecordDao.getByDate(
       DateTime.now(),
@@ -435,7 +439,7 @@ void main() {
     expect(stageRecord.studyTimeMilliseconds, greaterThanOrEqualTo(1000));
     expect(
       stageRecord.inputTimeMilliseconds,
-      stageRecord.studyTimeMilliseconds,
+      lessThanOrEqualTo(stageRecord.studyTimeMilliseconds),
     );
     expect(await database.learnedWordFormDao.countAll(), 2);
   });
@@ -446,6 +450,7 @@ void main() {
 
     await start();
     await completeWhole();
+    await finishStudyPage();
     await Future<void>.delayed(Duration.zero);
 
     final database = statisticsDatabase;
@@ -456,7 +461,10 @@ void main() {
     final record = await database.dailyStudyRecordDao.getByDate(DateTime.now());
     expect(record, isNotNull);
     expect(record?.studyTimeMilliseconds, greaterThan(0));
-    expect(record?.inputTimeMilliseconds, record?.studyTimeMilliseconds);
+    expect(
+      record?.inputTimeMilliseconds,
+      lessThanOrEqualTo(record?.studyTimeMilliseconds ?? 0),
+    );
     expect(record?.inputWords, 0);
   });
 
@@ -495,6 +503,7 @@ void main() {
 
   test('playing 短暂抖动复用同一个学习计时会话', () async {
     AppLogger.instance.clear();
+    studyPageGeneration = lp.beginStudyPage();
     lp.seed(sentences: sentences, settings: const PlaybackSettings());
 
     await start();
@@ -519,11 +528,11 @@ void main() {
     );
     expect(
       messages.where((message) => message.startsWith('session.pause')).length,
-      1,
+      0,
     );
     expect(
       messages.where((message) => message.startsWith('session.resume')).length,
-      1,
+      0,
     );
     expect(
       messages.where((message) => message.startsWith('session.stop')).length,
@@ -531,6 +540,17 @@ void main() {
     );
 
     await lp.stop();
+    expect(
+      AppLogger.instance.entries
+          .where(
+            (entry) =>
+                entry.tag == 'FreePlayerAudioTimer' &&
+                entry.message.startsWith('session.stop'),
+          )
+          .length,
+      0,
+    );
+    await finishStudyPage();
     expect(
       AppLogger.instance.entries
           .where(

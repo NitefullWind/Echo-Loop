@@ -14,11 +14,12 @@ import 'daos/saved_sense_group_dao.dart';
 import 'daos/learned_word_form_dao.dart';
 import 'daos/daily_study_record_dao.dart';
 import 'daos/daily_stage_study_record_dao.dart';
+import 'daos/study_statistics_dao.dart';
 import 'daos/tts_cache_dao.dart';
 import 'daos/memory_schedule_dao.dart';
 import '../services/study_time_service.dart';
-import '../services/study_statistics_recorder.dart';
 import '../services/study_activity_gate.dart';
+import '../services/app_logger.dart';
 import '../providers/audio_library_provider.dart';
 import '../providers/collection_provider.dart';
 import '../providers/learning_progress_provider.dart';
@@ -58,7 +59,12 @@ void initAppDatabase(AppDatabase db) {
 ///
 /// 用于演示模式切换：先关闭旧连接，再创建新数据库实例，
 /// 避免 Drift "multiple databases" 警告。
-Future<void> closeCurrentDatabase() async {
+Future<void> closeCurrentDatabase({StudyTimeService? studyTimeService}) async {
+  try {
+    await studyTimeService?.flush();
+  } catch (error, stackTrace) {
+    AppLogger.log('Database', '关闭前统计 flush 失败，继续切库: $error\n$stackTrace');
+  }
   await _appDatabase.close();
 }
 
@@ -74,6 +80,8 @@ void switchAppDatabase(AppDatabase newDb, WidgetRef ref) {
 
   // 1. Invalidate 核心数据库提供者
   ref.invalidate(appDatabaseProvider);
+  ref.invalidate(studyStatisticsDaoProvider);
+  ref.invalidate(studyTimeServiceProvider);
 
   // 2. 显式 invalidate 所有 keepAlive 数据提供者
   //    （它们用 ref.read() 而非 ref.watch()，不会自动级联）
@@ -207,7 +215,14 @@ final studyTimeServiceProvider = Provider<StudyTimeService>((ref) {
   return StudyTimeService(
     ref.watch(dailyStudyRecordDaoProvider),
     ref.watch(dailyStageStudyRecordDaoProvider),
+    statisticsDao: ref.watch(studyStatisticsDaoProvider),
+    activityGate: ref.watch(studyActivityGateProvider),
   );
+});
+
+/// 学习统计唯一写入 DAO Provider。
+final studyStatisticsDaoProvider = Provider<StudyStatisticsDao>((ref) {
+  return ref.watch(appDatabaseProvider).studyStatisticsDao;
 });
 
 /// 学习统计前台资格门控 Provider。
@@ -215,15 +230,4 @@ final studyActivityGateProvider = Provider<StudyActivityGate>((ref) {
   final gate = StudyActivityGate();
   ref.onDispose(gate.dispose);
   return gate;
-});
-
-/// 统一学习统计写入 Provider。
-final studyStatisticsRecorderProvider = Provider<StudyStatisticsRecorder>((
-  ref,
-) {
-  return StudyStatisticsRecorder(
-    studyTimeService: ref.watch(studyTimeServiceProvider),
-    activityGate: ref.watch(studyActivityGateProvider),
-    vocabularyTracker: ref.watch(learnedVocabularyTrackerProvider),
-  );
 });

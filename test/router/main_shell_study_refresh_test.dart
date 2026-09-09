@@ -15,6 +15,7 @@ import 'package:echo_loop/providers/study_stats_provider.dart';
 import 'package:echo_loop/router/app_router.dart';
 import 'package:echo_loop/router/main_shell.dart';
 import 'package:echo_loop/services/study_time_service.dart';
+import 'package:echo_loop/models/study_stage.dart';
 
 class _PendingStartupController extends LocalStartupController {
   @override
@@ -135,7 +136,10 @@ void main() {
     await StudyTimeService(
       database.dailyStudyRecordDao,
       database.dailyStageStudyRecordDao,
-    ).addStudyDuration(const Duration(seconds: 2));
+    ).recordActiveDuration(
+      const Duration(seconds: 2),
+      stage: StudyStage.intensiveListen,
+    );
 
     router.push('/free-player');
     await tester.pump();

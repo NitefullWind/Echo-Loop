@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:echo_loop/database/app_database.dart';
 import 'package:echo_loop/database/providers.dart';
 import 'package:echo_loop/providers/monthly_study_records_provider.dart';
+import 'package:echo_loop/models/study_stage.dart';
 import 'package:echo_loop/services/study_time_service.dart';
 
 AppDatabase _createTestDb() {
@@ -44,11 +45,33 @@ void main() {
   });
 
   test('有数据月份正确映射', () async {
-    await service.addStudyTime(600, date: DateTime(2026, 3, 5));
-    await service.addInputTime(300, date: DateTime(2026, 3, 5));
-    await service.addOutputTime(200, date: DateTime(2026, 3, 5));
-    await service.addStudyTime(1800, date: DateTime(2026, 3, 15));
-    await service.addInputTime(900, date: DateTime(2026, 3, 15));
+    await service.recordActiveDuration(
+      const Duration(seconds: 600),
+      stage: StudyStage.intensiveListen,
+      date: DateTime(2026, 3, 5),
+    );
+    await service.recordSentencePlayback(
+      duration: const Duration(seconds: 300),
+      text: '',
+      stage: StudyStage.intensiveListen,
+      date: DateTime(2026, 3, 5),
+    );
+    await service.recordSpeechRecognition(
+      duration: const Duration(seconds: 200),
+      stage: StudyStage.retell,
+      date: DateTime(2026, 3, 5),
+    );
+    await service.recordActiveDuration(
+      const Duration(seconds: 1800),
+      stage: StudyStage.intensiveListen,
+      date: DateTime(2026, 3, 15),
+    );
+    await service.recordSentencePlayback(
+      duration: const Duration(seconds: 900),
+      text: '',
+      stage: StudyStage.intensiveListen,
+      date: DateTime(2026, 3, 15),
+    );
 
     final records = await container.read(
       monthlyStudyRecordsProvider(2026, 3).future,
@@ -66,10 +89,26 @@ void main() {
 
   test('跨月边界不泄漏', () async {
     // 2 月末和 4 月初的数据不应出现在 3 月
-    await service.addStudyTime(100, date: DateTime(2026, 2, 28));
-    await service.addStudyTime(200, date: DateTime(2026, 3, 1));
-    await service.addStudyTime(300, date: DateTime(2026, 3, 31));
-    await service.addStudyTime(400, date: DateTime(2026, 4, 1));
+    await service.recordActiveDuration(
+      const Duration(seconds: 100),
+      stage: StudyStage.intensiveListen,
+      date: DateTime(2026, 2, 28),
+    );
+    await service.recordActiveDuration(
+      const Duration(seconds: 200),
+      stage: StudyStage.intensiveListen,
+      date: DateTime(2026, 3, 1),
+    );
+    await service.recordActiveDuration(
+      const Duration(seconds: 300),
+      stage: StudyStage.intensiveListen,
+      date: DateTime(2026, 3, 31),
+    );
+    await service.recordActiveDuration(
+      const Duration(seconds: 400),
+      stage: StudyStage.intensiveListen,
+      date: DateTime(2026, 4, 1),
+    );
 
     final records = await container.read(
       monthlyStudyRecordsProvider(2026, 3).future,

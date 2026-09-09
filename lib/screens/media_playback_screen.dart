@@ -28,6 +28,7 @@ import '../widgets/common/media_visual_surface.dart';
 import '../widgets/common/managed_media_visual_surface.dart';
 import '../widgets/dictionary/dictionary_panel_host.dart';
 import '../widgets/player_hotkey_scope.dart';
+import '../widgets/study/study_activity_detector.dart';
 import '../widgets/settings_dialog.dart';
 import '../widgets/sleep_timer.dart';
 import 'sentence_detail_screen.dart';
@@ -54,6 +55,7 @@ class _MediaPlaybackScreenState extends ConsumerState<MediaPlaybackScreen>
 
   late final TabController _playlistViewController;
   late final MediaPlayback _controller;
+  late final int _studyPageGeneration;
   late final MediaSleepTimer _sleepTimer;
   late final MediaFullscreenService _fullscreenService;
   late final StreamSubscription<bool> _fullscreenSubscription;
@@ -66,6 +68,7 @@ class _MediaPlaybackScreenState extends ConsumerState<MediaPlaybackScreen>
   void initState() {
     super.initState();
     _controller = ref.read(mediaPlaybackProvider.notifier);
+    _studyPageGeneration = _controller.beginStudyPage();
     _sleepTimer = ref.read(mediaSleepTimerProvider.notifier);
     _fullscreenService = MediaFullscreenService();
     _fullscreenSubscription = _fullscreenService.changes.listen((expanded) {
@@ -87,7 +90,11 @@ class _MediaPlaybackScreenState extends ConsumerState<MediaPlaybackScreen>
         break;
       case AppLifecycleState.detached:
         unawaited(_fullscreenService.exit());
-        unawaited(_controller.releaseFromScreen());
+        unawaited(
+          _controller.releaseFromScreen(
+            studyPageGeneration: _studyPageGeneration,
+          ),
+        );
     }
   }
 
@@ -113,7 +120,9 @@ class _MediaPlaybackScreenState extends ConsumerState<MediaPlaybackScreen>
     // microtask，ProviderScope 可能先触发 provider-level dispose，导致两条释放链
     // 以错误顺序争用同一条媒体命令队列。加载中的 cancelLoad 与这里的
     // releaseFromScreen 由 controller 去重，避免断点保存和媒体释放并发交错。
-    unawaited(_controller.releaseFromScreen());
+    unawaited(
+      _controller.releaseFromScreen(studyPageGeneration: _studyPageGeneration),
+    );
     scheduleMicrotask(_sleepTimer.cancel);
     super.dispose();
   }
@@ -127,28 +136,31 @@ class _MediaPlaybackScreenState extends ConsumerState<MediaPlaybackScreen>
   Widget build(BuildContext context) {
     final state = ref.watch(mediaPlaybackProvider);
     final l10n = AppLocalizations.of(context)!;
-    return LearningHotkeyScope(
-      onPlayPause: () => state.isPlaying
-          ? unawaited(_controller.pause())
-          : unawaited(_controller.play()),
-      onPrevious: () => unawaited(_controller.previousSentence()),
-      onNext: () => unawaited(_controller.nextSentence()),
-      child: Scaffold(
-        backgroundColor: state.visualTrackExpanded ? Colors.black : null,
-        appBar: state.visualTrackExpanded
-            ? null
-            : AppBar(
-                titleSpacing: 0,
-                title: _buildAppBarTitle(state, l10n),
-                actions: const [SleepTimerButton.mediaPlayback()],
-              ),
-        body: ManagedMediaVisualSurface(
-          loadKey: widget.audioItem.id,
-          load: () => _controller.load(widget.audioItem),
-          cancel: _controller.cancelLoad,
-          child: DictionaryPanelHost(
-            handleBackButton: true,
-            child: _buildBody(context, state, l10n),
+    return StudyActivityDetector(
+      onActivity: _controller.markStudyActivity,
+      child: LearningHotkeyScope(
+        onPlayPause: () => state.isPlaying
+            ? unawaited(_controller.pause())
+            : unawaited(_controller.play()),
+        onPrevious: () => unawaited(_controller.previousSentence()),
+        onNext: () => unawaited(_controller.nextSentence()),
+        child: Scaffold(
+          backgroundColor: state.visualTrackExpanded ? Colors.black : null,
+          appBar: state.visualTrackExpanded
+              ? null
+              : AppBar(
+                  titleSpacing: 0,
+                  title: _buildAppBarTitle(state, l10n),
+                  actions: const [SleepTimerButton.mediaPlayback()],
+                ),
+          body: ManagedMediaVisualSurface(
+            loadKey: widget.audioItem.id,
+            load: () => _controller.load(widget.audioItem),
+            cancel: _controller.cancelLoad,
+            child: DictionaryPanelHost(
+              handleBackButton: true,
+              child: _buildBody(context, state, l10n),
+            ),
           ),
         ),
       ),

@@ -69,7 +69,9 @@ Future<BackupManifest> performImport(
       onProgress: onProgress,
     );
 
-    await closeCurrentDatabase();
+    await closeCurrentDatabase(
+      studyTimeService: ref.read(studyTimeServiceProvider),
+    );
     databaseWasClosed = true;
     AppLogger.log('Backup', 'database_closed_for_restore');
     applied = await service.applyPreparedImport(

@@ -14832,6 +14832,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   );
   late final DailyStageStudyRecordDao dailyStageStudyRecordDao =
       DailyStageStudyRecordDao(this as AppDatabase);
+  late final StudyStatisticsDao studyStatisticsDao = StudyStatisticsDao(
+    this as AppDatabase,
+  );
   late final TtsCacheDao ttsCacheDao = TtsCacheDao(this as AppDatabase);
   late final MemoryScheduleDao memoryScheduleDao = MemoryScheduleDao(
     this as AppDatabase,

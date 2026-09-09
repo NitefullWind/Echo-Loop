@@ -6,6 +6,7 @@ import 'package:echo_loop/database/app_database.dart';
 import 'package:echo_loop/database/providers.dart';
 import 'package:echo_loop/providers/study_stats_provider.dart';
 import 'package:echo_loop/services/study_time_service.dart';
+import 'package:echo_loop/models/study_stage.dart';
 
 AppDatabase _createTestDb() {
   return AppDatabase(
@@ -37,20 +38,41 @@ void main() {
       db.dailyStudyRecordDao,
       db.dailyStageStudyRecordDao,
     );
-    await service.addStudyTime(1800, date: now);
-    await service.addInputWords(42, date: now);
-    await service.addOutputWords(21, date: now);
-    await db.learnedWordFormDao.insertIfAbsentAll({
-      'child': now,
-      'children': now,
-      'run': now.subtract(const Duration(days: 1)),
-    });
+    await service.recordActiveDuration(
+      const Duration(seconds: 1800),
+      stage: StudyStage.intensiveListen,
+      date: now,
+    );
+    await service.recordSentencePlayback(
+      duration: Duration.zero,
+      text: List.filled(40, 'word').join(' '),
+      stage: StudyStage.intensiveListen,
+      date: now,
+    );
+    await service.recordSpeechRecognition(
+      duration: Duration.zero,
+      producedWordCount: 21,
+      stage: StudyStage.retell,
+      date: now,
+    );
+    await service.recordSentencePlayback(
+      duration: Duration.zero,
+      text: 'child children',
+      stage: StudyStage.intensiveListen,
+      date: now,
+    );
+    await service.recordSentencePlayback(
+      duration: Duration.zero,
+      text: 'run',
+      stage: StudyStage.intensiveListen,
+      date: now.subtract(const Duration(days: 1)),
+    );
 
     final stats = await container.read(studyStatsNotifierProvider.future);
     expect(stats.todaySeconds, 1800);
     expect(stats.todayInputWords, 42);
     expect(stats.todayOutputWords, 21);
-    expect(stats.learnedWordFormCount, 3);
-    expect(stats.todayNewWordForms, 2);
+    expect(stats.learnedWordFormCount, 4);
+    expect(stats.todayNewWordForms, 3);
   });
 }

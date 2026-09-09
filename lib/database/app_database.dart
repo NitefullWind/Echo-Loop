@@ -47,6 +47,7 @@ import 'daos/saved_sense_group_dao.dart';
 import 'daos/learned_word_form_dao.dart';
 import 'daos/daily_study_record_dao.dart';
 import 'daos/daily_stage_study_record_dao.dart';
+import 'daos/study_statistics_dao.dart';
 import 'daos/tts_cache_dao.dart';
 import 'daos/memory_schedule_dao.dart';
 
@@ -93,6 +94,7 @@ part 'app_database.g.dart';
     LearnedWordFormDao,
     DailyStudyRecordDao,
     DailyStageStudyRecordDao,
+    StudyStatisticsDao,
     TtsCacheDao,
     MemoryScheduleDao,
   ],

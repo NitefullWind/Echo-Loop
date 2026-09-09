@@ -14,7 +14,6 @@ import '../../models/study_stage.dart';
 import '../../services/app_logger.dart';
 import '../../services/study_session_timer.dart';
 import '../../services/storage_service.dart';
-import '../../utils/word_counter.dart';
 import '../audio_engine/audio_engine_provider.dart';
 import '../collection_provider.dart';
 import '../notification_permission_provider.dart';
@@ -130,6 +129,8 @@ class ListeningPractice extends _$ListeningPractice {
   /// 跨句自动保存进度的并发护栏：上一次写库未完成时跳过本次，避免堆积写入。
   bool _autoSaving = false;
   StudySessionTimer? _studySessionTimer;
+  int _studyPageGeneration = 0;
+  int? _activeStudyPageGeneration;
 
   @override
   ListeningPracticeState build() {
@@ -137,7 +138,10 @@ class ListeningPractice extends _$ListeningPractice {
     ref.onDispose(() {
       _playbackGen++;
       _disposeListeners();
-      unawaited(_disposeStudySessionTimer());
+      final generation = _activeStudyPageGeneration;
+      if (generation != null) {
+        unawaited(endStudyPage(generation));
+      }
     });
     _loadSettings();
     return const ListeningPracticeState();
@@ -146,32 +150,41 @@ class ListeningPractice extends _$ListeningPractice {
   // --- 获取 AudioEngine ---
   AudioEngine get _engine => ref.read(audioEngineProvider.notifier);
 
-  /// 创建一次随心听前台学习计时会话；同一 Provider 内的暂停/恢复复用该实例。
-  void _startStudySessionTimer() {
-    final existing = _studySessionTimer;
-    if (existing != null) {
-      existing.resume();
-      return;
+  /// 建立随心听页面级学习会话；页面退出前播放器状态不会结束该会话。
+  int beginStudyPage() {
+    final generation = ++_studyPageGeneration;
+    _activeStudyPageGeneration = generation;
+    if (_studySessionTimer == null) {
+      final timer = StudySessionTimer(
+        studyTimeService: ref.read(studyTimeServiceProvider),
+        stage: StudyStage.freePlayer,
+        activityGate: ref.read(studyActivityGateProvider),
+        idleTimeout: const Duration(minutes: 2),
+        logScope: 'FreePlayerAudioTimer',
+      );
+      _studySessionTimer = timer;
+      timer.start();
+    } else {
+      _studySessionTimer?.markActivity();
     }
-    final timer = StudySessionTimer(
-      studyTimeService: ref.read(studyTimeServiceProvider),
-      stage: StudyStage.freePlayer,
-      activityGate: ref.read(studyActivityGateProvider),
-      recordInputDuration: true,
-      logScope: 'FreePlayerAudioTimer',
-    );
-    _studySessionTimer = timer;
-    timer.start();
+    _studySessionTimer?.setPlaybackActive(state.isPlaying);
+    return generation;
   }
 
-  /// 播放状态短暂变为暂停时只停止前台计时，保留会话供恢复播放继续使用。
-  void _pauseStudySessionTimer() {
-    final timer = _studySessionTimer;
-    if (timer != null) unawaited(timer.pause());
+  /// 标记随心听页面上的用户活动。
+  void markStudyActivity() {
+    _studySessionTimer?.markActivity();
   }
 
-  /// 计时器拥有者是播放器 Provider；真正结束播放或 Provider 销毁时才释放会话。
-  Future<void> _disposeStudySessionTimer() async {
+  /// 将播放器活动状态同步给页面学习会话。
+  void _setStudyPlaybackActive(bool active) {
+    _studySessionTimer?.setPlaybackActive(active);
+  }
+
+  /// 结束指定页面会话；过期页面的异步清理不会关闭新页面会话。
+  Future<void> endStudyPage(int generation) async {
+    if (_activeStudyPageGeneration != generation) return;
+    _activeStudyPageGeneration = null;
     final timer = _studySessionTimer;
     _studySessionTimer = null;
     if (timer != null) await timer.dispose();
@@ -438,11 +451,7 @@ class ListeningPractice extends _$ListeningPractice {
   void _setLogicalPlaying(bool playing) {
     if (state.isPlaying == playing) return;
     state = state.copyWith(isPlaying: playing);
-    if (playing) {
-      _startStudySessionTimer();
-    } else {
-      _pauseStudySessionTimer();
-    }
+    _setStudyPlaybackActive(playing);
   }
 
   /// 启动整篇连续播放的确定性循环（gapless）。
@@ -539,7 +548,6 @@ class ListeningPractice extends _$ListeningPractice {
         );
         _awaitingReplayFromStart = true;
         _setLogicalPlaying(false);
-        await _disposeStudySessionTimer();
         // 不 stop：保留媒体会话与锁屏 Now Playing（暂停态），用户可在锁屏直接重播。
         // 须 pause 底层播放器使其 playing=false——自然播完后 just_audio 的 playing
         // 仍为 true，不 pause 会让锁屏图标停在「暂停」（误显播放中）。
@@ -559,7 +567,6 @@ class ListeningPractice extends _$ListeningPractice {
       final playable = _playable;
       if (playable.isEmpty) {
         _setLogicalPlaying(false);
-        await _disposeStudySessionTimer();
         await _engine.stop();
         return;
       }
@@ -647,7 +654,6 @@ class ListeningPractice extends _$ListeningPractice {
       if (!shouldLoopWhole(s.loopWhole, s.wholeLoopCount, _wholeLoopsDone)) {
         _awaitingReplayFromStart = true;
         _setLogicalPlaying(false);
-        await _disposeStudySessionTimer();
         // 不 stop：保留媒体会话与锁屏 Now Playing（暂停态），用户可在锁屏直接重播。
         await _engine.pauseKeepSession();
         return;
@@ -673,7 +679,6 @@ class ListeningPractice extends _$ListeningPractice {
       final playable = _playable;
       if (playable.isEmpty || pos < 0 || pos >= playable.length) {
         _setLogicalPlaying(false);
-        await _disposeStudySessionTimer();
         await _engine.stop();
         return;
       }
@@ -735,7 +740,6 @@ class ListeningPractice extends _$ListeningPractice {
         case StopPlayback():
           _awaitingReplayFromStart = true;
           _setLogicalPlaying(false);
-          await _disposeStudySessionTimer();
           // 同整篇结束：保留媒体会话，锁屏控件停在暂停态供用户重播。
           await _engine.pauseKeepSession();
           return;
@@ -757,16 +761,14 @@ class ListeningPractice extends _$ListeningPractice {
   ///
   /// 统计提交必须不阻塞播放循环，写入失败由统一记录器捕获并输出诊断日志。
   void _recordCompletedSentenceStatistics(Sentence sentence) {
-    final recorder = ref.read(studyStatisticsRecorderProvider);
-    recorder.recordAsync(
-      recorder.recordSentencePlayback(
-        duration: sentence.duration,
-        heardWordCount: countWords(sentence.text),
-        text: sentence.text,
-        stage: StudyStage.freePlayer,
-        recordInputDuration: false,
-      ),
-    );
+    ref
+        .read(studyTimeServiceProvider)
+        .submitSentencePlayback(
+          duration: sentence.duration,
+          text: sentence.text,
+          stage: StudyStage.freePlayer,
+          recordInputDuration: false,
+        );
   }
 
   /// gapless 播放中打开单句循环后，等待当前句自然结束，再在“当前句边界”交接到 clip。
@@ -809,7 +811,6 @@ class ListeningPractice extends _$ListeningPractice {
       case StopPlayback():
         _activeSentenceDrivenPlayback = false;
         _setLogicalPlaying(false);
-        await _disposeStudySessionTimer();
         await _engine.stop();
         return;
       case ReplayCurrent():
@@ -1183,7 +1184,6 @@ class ListeningPractice extends _$ListeningPractice {
     _pendingPlaybackModeHandoff = false;
     _setLogicalPlaying(false);
     await _engine.stop();
-    await _disposeStudySessionTimer();
   }
 
   Future<void> seek(Duration position) async {
