@@ -13,7 +13,9 @@ import 'package:echo_loop/features/memory_scheduler/domain/memory_namespaces.dar
 import 'package:echo_loop/features/memory_scheduler/providers/memory_scheduler_providers.dart';
 import 'package:echo_loop/models/favorite_review_settings.dart';
 import 'package:echo_loop/models/flashcard_item.dart';
+import 'package:echo_loop/models/study_stage.dart';
 import 'package:echo_loop/providers/pronunciation/pronunciation_providers.dart';
+import 'package:echo_loop/services/pronunciation/local_audio_clip_player.dart';
 import 'package:echo_loop/providers/tts/tts_controller_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,18 +24,25 @@ class _FakeTextPlaybackController extends TextPlaybackController {
   int stops = 0;
   final spoken = <String>[];
   bool holdSpeak = false;
+  AudioPlaybackResult result = AudioPlaybackResult.completed;
+  final speakStarted = Completer<void>();
   Completer<void>? pendingSpeak;
 
   @override
   TextPlaybackState build() => const TextPlaybackState();
 
   @override
-  Future<void> speak(String text, {String? key}) async {
+  Future<AudioPlaybackResult> speakWithResult(
+    String text, {
+    String? key,
+  }) async {
     spoken.add(text);
+    if (!speakStarted.isCompleted) speakStarted.complete();
     if (holdSpeak) {
       final pending = pendingSpeak ??= Completer<void>();
       await pending.future;
     }
+    return result;
   }
 
   @override
@@ -46,6 +55,7 @@ class _FakeTextPlaybackController extends TextPlaybackController {
 
 class _FakeTtsController extends TtsController {
   bool holdSpeak = false;
+  AudioPlaybackResult result = AudioPlaybackResult.completed;
   final spoken = <String>[];
   final speakStarted = Completer<void>();
   Completer<void>? pendingSpeak;
@@ -54,7 +64,10 @@ class _FakeTtsController extends TtsController {
   TtsControllerState build() => const TtsControllerState();
 
   @override
-  Future<void> speak(String text, {String? key}) async {
+  Future<AudioPlaybackResult> speakWithResult(
+    String text, {
+    String? key,
+  }) async {
     spoken.add(text);
     state = TtsControllerState(speakingKey: key ?? text);
     if (!speakStarted.isCompleted) speakStarted.complete();
@@ -63,6 +76,7 @@ class _FakeTtsController extends TtsController {
       await pending.future;
     }
     state = const TtsControllerState();
+    return result;
   }
 
   @override
@@ -124,6 +138,11 @@ void main() {
   });
 
   tearDown(() async {
+    if (container.exists(favoriteVocabularyReviewProvider)) {
+      await container
+          .read(favoriteVocabularyReviewProvider.notifier)
+          .disposeSession();
+    }
     container.dispose();
     await database.close();
   });
@@ -175,6 +194,180 @@ void main() {
     },
   );
 
+  test(
+    'completed vocabulary playback writes actual phrase statistics',
+    () async {
+      final notifier = container.read(
+        favoriteVocabularyReviewProvider.notifier,
+      );
+      await notifier.initialize([_word('w1', 'hello world')], []);
+
+      await notifier.replayCurrent();
+      await notifier.disposeSession();
+
+      final record = await database.dailyStudyRecordDao.getByDate(
+        DateTime.now(),
+      );
+      expect(record?.inputWords, 2);
+      expect(record?.inputTimeMilliseconds, greaterThanOrEqualTo(0));
+      final stageRecords = await database.dailyStageStudyRecordDao.getByDate(
+        DateTime.now(),
+      );
+      expect(stageRecords.single.stage, StudyStage.savedVocabularyReview);
+      final forms = await database.select(database.learnedWordForms).get();
+      expect(
+        forms.map((form) => form.wordForm),
+        containsAll(['hello', 'world']),
+      );
+    },
+  );
+
+  test('failed vocabulary playback does not write input statistics', () async {
+    final notifier = container.read(favoriteVocabularyReviewProvider.notifier);
+    await notifier.initialize([_word('w1', 'hello world')], []);
+    fakePlayback.result = AudioPlaybackResult.failed;
+
+    await notifier.replayCurrent();
+    final state = container.read(favoriteVocabularyReviewProvider);
+    expect(
+      state.wordPlaybackState,
+      FavoriteVocabularyReviewPlaybackState.failed,
+    );
+    expect(state.mediaError, 'audio_unavailable');
+
+    await notifier.disposeSession();
+    final record = await database.dailyStudyRecordDao.getByDate(DateTime.now());
+    expect(record?.inputWords ?? 0, 0);
+    expect(record?.inputTimeMilliseconds ?? 0, 0);
+  });
+
+  test(
+    'cancelled vocabulary playback does not write input statistics',
+    () async {
+      final notifier = container.read(
+        favoriteVocabularyReviewProvider.notifier,
+      );
+      await notifier.initialize([_word('w1', 'hello world')], []);
+      fakePlayback.result = AudioPlaybackResult.cancelled;
+
+      await notifier.replayCurrent();
+
+      final state = container.read(favoriteVocabularyReviewProvider);
+      expect(
+        state.wordPlaybackState,
+        FavoriteVocabularyReviewPlaybackState.idle,
+      );
+      expect(state.mediaError, isNull);
+      await notifier.disposeSession();
+      final record = await database.dailyStudyRecordDao.getByDate(
+        DateTime.now(),
+      );
+      expect(record?.inputWords ?? 0, 0);
+    },
+  );
+
+  test(
+    'interrupted vocabulary playback does not write input statistics',
+    () async {
+      final notifier = container.read(
+        favoriteVocabularyReviewProvider.notifier,
+      );
+      await notifier.initialize([_word('w1', 'hello world')], []);
+      fakePlayback.holdSpeak = true;
+
+      final playback = notifier.replayCurrent();
+      await fakePlayback.speakStarted.future;
+      await notifier.interruptPlayback();
+      await playback;
+      await notifier.disposeSession();
+
+      final record = await database.dailyStudyRecordDao.getByDate(
+        DateTime.now(),
+      );
+      expect(record?.inputWords ?? 0, 0);
+      expect(record?.inputTimeMilliseconds ?? 0, 0);
+    },
+  );
+
+  test(
+    'completed source sentence playback writes sentence statistics',
+    () async {
+      final notifier = container.read(
+        favoriteVocabularyReviewProvider.notifier,
+      );
+      await notifier.initialize([
+        _word('w1', 'apple', sentenceText: 'I ate an apple.'),
+      ], []);
+      await notifier.revealBack();
+
+      await notifier.playSourceSentence();
+      await notifier.disposeSession();
+
+      final record = await database.dailyStudyRecordDao.getByDate(
+        DateTime.now(),
+      );
+      expect(record?.inputWords, 4);
+      expect(record?.inputTimeMilliseconds, greaterThanOrEqualTo(0));
+    },
+  );
+
+  test(
+    'failed source sentence playback does not write input statistics',
+    () async {
+      final notifier = container.read(
+        favoriteVocabularyReviewProvider.notifier,
+      );
+      await notifier.initialize([
+        _word('w1', 'apple', sentenceText: 'I ate an apple.'),
+      ], []);
+      await notifier.revealBack();
+      fakeTts.result = AudioPlaybackResult.failed;
+
+      await notifier.playSourceSentence();
+
+      final state = container.read(favoriteVocabularyReviewProvider);
+      expect(
+        state.sourcePlaybackState,
+        FavoriteVocabularyReviewPlaybackState.idle,
+      );
+      expect(state.mediaError, 'audio_unavailable');
+      await notifier.disposeSession();
+      final record = await database.dailyStudyRecordDao.getByDate(
+        DateTime.now(),
+      );
+      expect(record?.inputWords ?? 0, 0);
+      expect(record?.inputTimeMilliseconds ?? 0, 0);
+    },
+  );
+
+  test(
+    'cancelled source sentence playback does not write input statistics',
+    () async {
+      final notifier = container.read(
+        favoriteVocabularyReviewProvider.notifier,
+      );
+      await notifier.initialize([
+        _word('w1', 'apple', sentenceText: 'I ate an apple.'),
+      ], []);
+      await notifier.revealBack();
+      fakeTts.result = AudioPlaybackResult.cancelled;
+
+      await notifier.playSourceSentence();
+
+      final state = container.read(favoriteVocabularyReviewProvider);
+      expect(
+        state.sourcePlaybackState,
+        FavoriteVocabularyReviewPlaybackState.idle,
+      );
+      expect(state.mediaError, isNull);
+      await notifier.disposeSession();
+      final record = await database.dailyStudyRecordDao.getByDate(
+        DateTime.now(),
+      );
+      expect(record?.inputWords ?? 0, 0);
+    },
+  );
+
   test('shared front auto-play setting controls vocabulary playback', () async {
     final disabledContainer = ProviderContainer(
       overrides: [
@@ -185,7 +378,12 @@ void main() {
         ),
       ],
     );
-    addTearDown(disabledContainer.dispose);
+    addTearDown(() async {
+      await disabledContainer
+          .read(favoriteVocabularyReviewProvider.notifier)
+          .disposeSession();
+      disabledContainer.dispose();
+    });
     final notifier = disabledContainer.read(
       favoriteVocabularyReviewProvider.notifier,
     );
@@ -378,6 +576,7 @@ void main() {
     expect(state.currentCard?.displayText, 'apple');
     expect(state.isRemoving, isFalse);
     expect(state.removeError, 'unsave_failed');
+    await notifier.disposeSession();
   });
 
   test(

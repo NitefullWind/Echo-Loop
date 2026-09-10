@@ -120,9 +120,13 @@ class BookmarkReview extends _$BookmarkReview {
   StudySessionTimer? _studySessionTimer;
   ScheduledFlashcardController<BookmarkSentence>? _controller;
   ReviewSessionSummary _summary = const ReviewSessionSummary();
+  Future<void>? _disposeSessionInFlight;
 
   /// 当前收藏句复习会话的前台有效时长。
   Duration get elapsed => _studySessionTimer?.elapsed ?? Duration.zero;
+
+  /// 标记用户仍在收藏句复习页面活动，让页面级计时器恢复前台计时。
+  void markStudyActivity() => _studySessionTimer?.markActivity();
 
   @override
   BookmarkReviewState build() {
@@ -187,13 +191,15 @@ class BookmarkReview extends _$BookmarkReview {
     );
     if (completionSummary != null) return;
     // 每次新建复习快照都创建新的计时会话，避免复用已停止的 timer。
-    _studySessionTimer = StudySessionTimer(
+    final timer = StudySessionTimer(
       studyTimeService: ref.read(studyTimeServiceProvider),
       stage: StudyStage.savedSentencesReview,
       activityGate: ref.read(studyActivityGateProvider),
+      idleTimeout: const Duration(minutes: 2),
       logScope: 'SavedSentenceReviewTimer',
     );
-    _studySessionTimer!.start();
+    _studySessionTimer = timer;
+    timer.start();
     ref.read(analyticsServiceProvider).track(Events.bookmarkReviewStart, {
       EventParams.totalSentencesCount: state.initialTotal,
     });
@@ -215,6 +221,7 @@ class BookmarkReview extends _$BookmarkReview {
     await _stopForegroundPlaybackIfActive();
     await player.stop();
     if (!_isCurrent(generation, card)) return;
+    markStudyActivity();
     state = state.copyWith(
       playbackState: BookmarkReviewPlaybackState.loading,
       clearMediaError: true,
@@ -228,6 +235,10 @@ class BookmarkReview extends _$BookmarkReview {
       if (!_isCurrent(generation, card)) return;
       switch (result) {
         case AudioPlaybackResult.completed:
+          _recordCompletedSentencePlayback(card);
+          state = state.copyWith(
+            playbackState: BookmarkReviewPlaybackState.idle,
+          );
         case AudioPlaybackResult.cancelled:
           state = state.copyWith(
             playbackState: BookmarkReviewPlaybackState.idle,
@@ -380,23 +391,75 @@ class BookmarkReview extends _$BookmarkReview {
     }
   }
 
-  Future<void> disposeSession() async {
-    await interruptPlayback();
-    await _studySessionTimer?.stop();
-    if (state.initialTotal > 0) {
-      ref
-          .read(usageTrackerProvider)
-          .record(
-            UsageEvent.bookmarkSentenceReviewCompleted,
-            analyticsParams: {
-              EventParams.totalSentencesCount: state.initialTotal,
-              EventParams.durationMs: 0,
-            },
-          );
+  /// 幂等结束复习会话，确保退出路由和页面回调不会重复清理资源或漏刷统计。
+  Future<void> disposeSession() {
+    final inFlight = _disposeSessionInFlight;
+    if (inFlight != null) return inFlight;
+    final operation = _disposeSessionImpl();
+    late final Future<void> tracked;
+    tracked = operation.whenComplete(() {
+      if (identical(_disposeSessionInFlight, tracked)) {
+        _disposeSessionInFlight = null;
+      }
+    });
+    _disposeSessionInFlight = tracked;
+    return tracked;
+  }
+
+  Future<void> _disposeSessionImpl() async {
+    try {
+      await interruptPlayback();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'favorite sentence playback cleanup failed error=$error\n$stackTrace',
+      );
     }
-    _controller?.dispose();
-    _controller = null;
-    state = const BookmarkReviewState();
+
+    final timer = _studySessionTimer;
+    final initialTotal = state.initialTotal;
+    try {
+      await timer?.stop();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'favorite sentence timer stop failed error=$error\n$stackTrace',
+      );
+    }
+    try {
+      await ref.read(studyTimeServiceProvider).flush();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'favorite sentence statistics flush failed error=$error\n$stackTrace',
+      );
+    } finally {
+      try {
+        await timer?.dispose();
+      } catch (error, stackTrace) {
+        AppLogger.log(
+          'StudyExit',
+          'favorite sentence timer cleanup failed error=$error\n$stackTrace',
+        );
+      }
+      if (identical(_studySessionTimer, timer)) {
+        _studySessionTimer = null;
+      }
+      if (initialTotal > 0) {
+        ref
+            .read(usageTrackerProvider)
+            .record(
+              UsageEvent.bookmarkSentenceReviewCompleted,
+              analyticsParams: {
+                EventParams.totalSentencesCount: initialTotal,
+                EventParams.durationMs: 0,
+              },
+            );
+      }
+      _controller?.dispose();
+      _controller = null;
+      state = const BookmarkReviewState();
+    }
   }
 
   /// 将通用会话的当前项和计数映射为页面所需的最小状态。
@@ -420,7 +483,7 @@ class BookmarkReview extends _$BookmarkReview {
     if (controller.state.phase != ScheduledFlashcardPhase.completed) {
       return null;
     }
-    unawaited(_studySessionTimer?.stop());
+    unawaited(_stopTimerSafely());
     return _summary.complete(
       elapsed: _studySessionTimer?.elapsed ?? Duration.zero,
       reviewedCount: controller.state.reviewedCount,
@@ -429,6 +492,28 @@ class BookmarkReview extends _$BookmarkReview {
 
   bool _isCurrent(int generation, BookmarkSentence card) =>
       generation == _generation && identical(state.currentCard, card);
+
+  /// 只有完整播放才提交输入统计；中断、切卡和退出都不会调用此方法。
+  void _recordCompletedSentencePlayback(BookmarkSentence card) {
+    ref
+        .read(studyTimeServiceProvider)
+        .submitSentencePlayback(
+          duration: card.sentence.duration,
+          text: card.sentence.text,
+          stage: StudyStage.savedSentencesReview,
+        );
+  }
+
+  Future<void> _stopTimerSafely() async {
+    try {
+      await _studySessionTimer?.stop();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'favorite sentence timer stop failed error=$error\n$stackTrace',
+      );
+    }
+  }
 
   /// 复用短音频播放器播放收藏句原始区间；视频文件由 media_kit 只输出音轨。
   Future<AudioPlaybackResult> _playSentenceRange(

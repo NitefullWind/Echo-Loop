@@ -71,6 +71,8 @@ class _FakeShortAudioPlayer extends LocalAudioClipPlayer {
   final paths = <String>[];
   final ranges = <(Duration, Duration)>[];
   Completer<AudioPlaybackResult>? pendingRangePlay;
+  final _rangePlaybackStartWaiters = <Completer<void>>[];
+  int _unobservedRangePlaybackStarts = 0;
   String? _playingKey;
 
   @override
@@ -88,7 +90,22 @@ class _FakeShortAudioPlayer extends LocalAudioClipPlayer {
     paths.add(filePath);
     ranges.add((start, end));
     _playingKey = playbackKey;
+    if (_rangePlaybackStartWaiters.isNotEmpty) {
+      _rangePlaybackStartWaiters.removeAt(0).complete();
+    } else {
+      _unobservedRangePlaybackStarts++;
+    }
     return (pendingRangePlay ??= Completer<AudioPlaybackResult>()).future;
+  }
+
+  Future<void> waitForRangePlaybackStart() {
+    if (_unobservedRangePlaybackStarts > 0) {
+      _unobservedRangePlaybackStarts--;
+      return Future<void>.value();
+    }
+    final waiter = Completer<void>();
+    _rangePlaybackStartWaiters.add(waiter);
+    return waiter.future;
   }
 
   @override
@@ -173,6 +190,11 @@ ProviderContainer _container(
   ],
 );
 
+Future<void> _disposeBookmarkContainer(ProviderContainer container) async {
+  await container.read(bookmarkReviewProvider.notifier).disposeSession();
+  container.dispose();
+}
+
 ({
   ProviderContainer container,
   db.AppDatabase database,
@@ -233,7 +255,7 @@ void main() {
     final database = scope.database;
     final container = scope.container;
     addTearDown(() async {
-      container.dispose();
+      await _disposeBookmarkContainer(container);
       await database.close();
     });
     final invalid = BookmarkWithAudio(
@@ -254,7 +276,7 @@ void main() {
     final scope = _testScope(_TestBookmarkDao());
     final container = scope.container;
     addTearDown(() async {
-      container.dispose();
+      await _disposeBookmarkContainer(container);
       await scope.database.close();
     });
     final notifier = container.read(bookmarkReviewProvider.notifier);
@@ -274,7 +296,7 @@ void main() {
       final scope = _testScope(_TestBookmarkDao());
       final container = scope.container;
       addTearDown(() async {
-        container.dispose();
+        await _disposeBookmarkContainer(container);
         await scope.database.close();
       });
       final foreground =
@@ -294,7 +316,7 @@ void main() {
     final scope = _testScope(_TestBookmarkDao());
     final container = scope.container;
     addTearDown(() async {
-      container.dispose();
+      await _disposeBookmarkContainer(container);
       await scope.database.close();
     });
     final foreground =
@@ -316,7 +338,7 @@ void main() {
       autoPlayBack: false,
     );
     addTearDown(() async {
-      disabled.container.dispose();
+      await _disposeBookmarkContainer(disabled.container);
       await disabled.database.close();
     });
     final disabledNotifier = disabled.container.read(
@@ -333,7 +355,7 @@ void main() {
       autoPlayBack: true,
     );
     addTearDown(() async {
-      enabled.container.dispose();
+      await _disposeBookmarkContainer(enabled.container);
       await enabled.database.close();
     });
     final enabledNotifier = enabled.container.read(
@@ -342,7 +364,7 @@ void main() {
     await _addPlayableMedia(enabled.database);
     await enabledNotifier.initialize([_bookmark(1)]);
     unawaited(enabledNotifier.startCurrentCard());
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await enabled.player.waitForRangePlaybackStart();
     expect(enabled.player.rangePlays, 1);
     expect(enabled.player.paths.single, endsWith('media/test.mp4'));
     expect(enabled.player.ranges.single, (
@@ -351,7 +373,7 @@ void main() {
     ));
     await enabledNotifier.interruptPlayback();
     await enabledNotifier.revealBack();
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await enabled.player.waitForRangePlaybackStart();
     expect(enabled.player.rangePlays, 2);
     await enabledNotifier.interruptPlayback();
   });
@@ -360,7 +382,7 @@ void main() {
     final scope = _testScope(_TestBookmarkDao());
     final container = scope.container;
     addTearDown(() async {
-      container.dispose();
+      await _disposeBookmarkContainer(container);
       await scope.database.close();
     });
     final notifier = container.read(bookmarkReviewProvider.notifier);
@@ -369,7 +391,7 @@ void main() {
     await notifier.revealBack();
 
     final playback = notifier.toggleCurrentPlayback();
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await scope.player.waitForRangePlaybackStart();
     expect(scope.player.rangePlays, 1);
     expect(
       container.read(bookmarkReviewProvider).playbackState,
@@ -388,7 +410,7 @@ void main() {
   test('completed sentence playback returns to idle', () async {
     final scope = _testScope(_TestBookmarkDao());
     addTearDown(() async {
-      scope.container.dispose();
+      await _disposeBookmarkContainer(scope.container);
       await scope.database.close();
     });
     final notifier = scope.container.read(bookmarkReviewProvider.notifier);
@@ -397,7 +419,7 @@ void main() {
     await notifier.revealBack();
 
     final playback = notifier.toggleCurrentPlayback();
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await scope.player.waitForRangePlaybackStart();
     scope.player.completeRange(AudioPlaybackResult.completed);
     await playback;
 
@@ -407,19 +429,74 @@ void main() {
     );
   });
 
+  test('completed sentence playback writes new statistics', () async {
+    final scope = _testScope(_TestBookmarkDao());
+    addTearDown(() async {
+      await _disposeBookmarkContainer(scope.container);
+      await scope.database.close();
+    });
+    final notifier = scope.container.read(bookmarkReviewProvider.notifier);
+    await _addPlayableMedia(scope.database);
+    await notifier.initialize([_bookmark(1)]);
+    await notifier.revealBack();
+
+    final playback = notifier.toggleCurrentPlayback();
+    await scope.player.waitForRangePlaybackStart();
+    scope.player.completeRange(AudioPlaybackResult.completed);
+    await playback;
+    await notifier.disposeSession();
+
+    final record = await scope.database.dailyStudyRecordDao.getByDate(
+      DateTime.now(),
+    );
+    expect(record?.inputWords, 2);
+    expect(record?.inputTimeMilliseconds, 1000);
+    final forms = await scope.database
+        .select(scope.database.learnedWordForms)
+        .get();
+    expect(forms.map((form) => form.wordForm), contains('sentence'));
+  });
+
   test(
-    'rating the last card stops playback before showing completion',
+    'interrupted sentence playback does not write input statistics',
     () async {
-      final scope = _testScope(_TestBookmarkDao(), autoPlayBack: true);
+      final scope = _testScope(_TestBookmarkDao());
       addTearDown(() async {
-        scope.container.dispose();
+        await _disposeBookmarkContainer(scope.container);
         await scope.database.close();
       });
       final notifier = scope.container.read(bookmarkReviewProvider.notifier);
       await _addPlayableMedia(scope.database);
       await notifier.initialize([_bookmark(1)]);
       await notifier.revealBack();
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      final playback = notifier.toggleCurrentPlayback();
+      await scope.player.waitForRangePlaybackStart();
+      await notifier.interruptPlayback();
+      await playback;
+      await notifier.disposeSession();
+
+      final record = await scope.database.dailyStudyRecordDao.getByDate(
+        DateTime.now(),
+      );
+      expect(record?.inputWords ?? 0, 0);
+      expect(record?.inputTimeMilliseconds ?? 0, 0);
+    },
+  );
+
+  test(
+    'rating the last card stops playback before showing completion',
+    () async {
+      final scope = _testScope(_TestBookmarkDao(), autoPlayBack: true);
+      addTearDown(() async {
+        await _disposeBookmarkContainer(scope.container);
+        await scope.database.close();
+      });
+      final notifier = scope.container.read(bookmarkReviewProvider.notifier);
+      await _addPlayableMedia(scope.database);
+      await notifier.initialize([_bookmark(1)]);
+      await notifier.revealBack();
+      await scope.player.waitForRangePlaybackStart();
       expect(scope.player.pendingRangePlay, isNotNull);
 
       await notifier.selectRating(MemoryRating.good);
@@ -436,7 +513,7 @@ void main() {
   test('failed sentence playback exposes the existing failed state', () async {
     final scope = _testScope(_TestBookmarkDao());
     addTearDown(() async {
-      scope.container.dispose();
+      await _disposeBookmarkContainer(scope.container);
       await scope.database.close();
     });
     final notifier = scope.container.read(bookmarkReviewProvider.notifier);
@@ -445,7 +522,7 @@ void main() {
     await notifier.revealBack();
 
     final playback = notifier.toggleCurrentPlayback();
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await scope.player.waitForRangePlaybackStart();
     scope.player.completeRange(AudioPlaybackResult.failed);
     await playback;
 
@@ -459,7 +536,7 @@ void main() {
     final scope = _testScope(dao);
     final container = scope.container;
     addTearDown(() async {
-      container.dispose();
+      await _disposeBookmarkContainer(container);
       await scope.database.close();
     });
     final notifier = container.read(bookmarkReviewProvider.notifier);
@@ -477,7 +554,7 @@ void main() {
   test('empty deck creates a zero-stat completion summary', () async {
     final scope = _testScope(_TestBookmarkDao());
     addTearDown(() async {
-      scope.container.dispose();
+      await _disposeBookmarkContainer(scope.container);
       await scope.database.close();
     });
 
@@ -497,7 +574,7 @@ void main() {
     () async {
       final scope = _testScope(_TestBookmarkDao());
       addTearDown(() async {
-        scope.container.dispose();
+        await _disposeBookmarkContainer(scope.container);
         await scope.database.close();
       });
       final notifier = scope.container.read(bookmarkReviewProvider.notifier);
@@ -517,7 +594,7 @@ void main() {
     final scope = _testScope(_TestBookmarkDao(fail: true));
     final container = scope.container;
     addTearDown(() async {
-      container.dispose();
+      await _disposeBookmarkContainer(container);
       await scope.database.close();
     });
     final notifier = container.read(bookmarkReviewProvider.notifier);

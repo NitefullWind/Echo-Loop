@@ -36,8 +36,9 @@ import '../providers/saved_sense_group_provider.dart';
 import '../providers/saved_word_provider.dart';
 import '../services/dictionary_service.dart';
 import '../services/app_logger.dart';
-import '../services/pronunciation/source_sentence_player.dart';
+import '../services/pronunciation/local_audio_clip_player.dart';
 import '../services/pronunciation/local_audio_range_player.dart';
+import '../services/pronunciation/source_sentence_player.dart';
 import '../services/subtitle_parser.dart';
 import '../router/app_router.dart';
 import '../theme/app_theme.dart';
@@ -194,7 +195,7 @@ class _FavoritesSegment extends StatelessWidget {
 /// 收藏页 AppBar 的更多操作。
 enum _FavoritesMoreAction { recycleBin, reviewSettings }
 
-Future<bool> _playSourceSentence(
+Future<AudioPlaybackResult> _playSourceSentence(
   WidgetRef ref, {
   required String key,
   required String? audioItemId,
@@ -210,8 +211,9 @@ Future<bool> _playSourceSentence(
   final player = SourceSentencePlayer(
     audioItemDao: ref.read(audioItemDaoProvider),
     audioClipPlayer: ref.read(shortAudioPlayerProvider),
-    speak: (text, playbackKey) =>
-        ref.read(ttsControllerProvider.notifier).speak(text, key: playbackKey),
+    speak: (text, playbackKey) => ref
+        .read(ttsControllerProvider.notifier)
+        .speakWithResult(text, key: playbackKey),
   );
   return player.play(
     audioItemId: audioItemId,
@@ -1519,113 +1521,6 @@ class _SavedPhraseTileState extends ConsumerState<_SavedPhraseTile> {
       sentenceEndMs: phrase.sentenceEndMs,
     );
     return;
-
-    /* Legacy inline implementation retained temporarily during migration.
-    try {
-      final dao = ref.read(audioItemDaoProvider);
-      final startMs = phrase.sentenceStartMs;
-      final endMs = phrase.sentenceEndMs;
-      final row = phrase.audioItemId == null
-          ? null
-          : await dao.getById(phrase.audioItemId!);
-      final start = startMs;
-      final end = endMs;
-
-      if (row != null && start != null && end != null && mounted) {
-        final audioItem = model.AudioItem(
-          id: row.id,
-          name: row.name,
-          audioPath: row.audioPath,
-          transcriptPath: row.transcriptPath,
-          addedDate: row.addedDate,
-          totalDuration: row.totalDuration,
-          sentenceCount: row.sentenceCount,
-          wordCount: row.wordCount,
-          isPinned: row.isPinned,
-          transcriptSource: model.TranscriptSource.fromIndex(
-            row.transcriptSource,
-          ),
-          audioSha256: row.audioSha256,
-          originalAudioSha256: row.originalAudioSha256,
-          transcriptLanguage: row.transcriptLanguage,
-        );
-
-        final filePath = await audioItem.getFullAudioPath();
-        if (mounted && filePath != null) {
-          final played = await ref
-              .read(shortAudioPlayerProvider)
-              .playRangeFile(
-                filePath,
-                start: Duration(milliseconds: start),
-                end: Duration(milliseconds: end),
-              );
-          if (played) return;
-        }
-      }
-
-      if (row != null && phrase.sentenceText?.trim().isNotEmpty == true) {
-        final srt = await dao.getTranscriptSrt(row.id);
-        if (srt != null && srt.isNotEmpty) {
-          final sentences = await SubtitleParser.parseSubtitleString(srt);
-          var sentence =
-              phrase.sentenceIndex != null &&
-                  phrase.sentenceIndex! < sentences.length
-              ? sentences[phrase.sentenceIndex!]
-              : null;
-          final storedText = phrase.sentenceText?.trim();
-          if (storedText != null &&
-              (sentence == null || sentence.text.trim() != storedText)) {
-            sentence = null;
-            for (final candidate in sentences) {
-              if (candidate.text.trim() == storedText) {
-                sentence = candidate;
-                break;
-              }
-            }
-          }
-          if (sentence != null && mounted) {
-            final audioItem = model.AudioItem(
-              id: row.id,
-              name: row.name,
-              audioPath: row.audioPath,
-              transcriptPath: row.transcriptPath,
-              addedDate: row.addedDate,
-              totalDuration: row.totalDuration,
-              sentenceCount: row.sentenceCount,
-              wordCount: row.wordCount,
-              isPinned: row.isPinned,
-              transcriptSource: model.TranscriptSource.fromIndex(
-                row.transcriptSource,
-              ),
-              audioSha256: row.audioSha256,
-              originalAudioSha256: row.originalAudioSha256,
-              transcriptLanguage: row.transcriptLanguage,
-            );
-            final filePath = await audioItem.getFullAudioPath();
-            if (filePath != null) {
-              final played = await ref
-                  .read(shortAudioPlayerProvider)
-                  .playRangeFile(
-                    filePath,
-                    start: sentence.startTime,
-                    end: sentence.endTime,
-                  );
-              if (played) return;
-            }
-          }
-        }
-      }
-
-      final text = phrase.sentenceText;
-      if (text != null && text.trim().isNotEmpty) {
-        await ref.read(ttsControllerProvider.notifier).speak(text);
-      }
-    } catch (_) {
-      // 忽略播放错误
-    } finally {
-      if (mounted) setState(() => _isPlaying = false);
-    }
-    */
   }
 
   @override
@@ -1888,140 +1783,6 @@ class _SavedWordTileState extends ConsumerState<_SavedWordTile> {
       sentenceEndMs: word.sentenceEndMs,
     );
     return;
-
-    /* Legacy inline implementation retained temporarily during migration.
-    try {
-      if (word.audioItemId == null) {
-        if (word.sentenceText?.trim().isNotEmpty ?? false) {
-          await ref
-              .read(ttsControllerProvider.notifier)
-              .speak(word.sentenceText!);
-        }
-        return;
-      }
-
-      // 从数据库获取音频项
-      final dao = ref.read(audioItemDaoProvider);
-      final row = await dao.getById(word.audioItemId!);
-      if (row == null || !mounted) {
-        if (word.sentenceText?.trim().isNotEmpty ?? false) {
-          await ref
-              .read(ttsControllerProvider.notifier)
-              .speak(word.sentenceText!);
-        }
-        return;
-      }
-
-      final audioItem = model.AudioItem(
-        id: row.id,
-        name: row.name,
-        audioPath: row.audioPath,
-        transcriptPath: row.transcriptPath,
-        addedDate: row.addedDate,
-        totalDuration: row.totalDuration,
-        sentenceCount: row.sentenceCount,
-        wordCount: row.wordCount,
-        isPinned: row.isPinned,
-        transcriptSource: model.TranscriptSource.fromIndex(
-          row.transcriptSource,
-        ),
-        audioSha256: row.audioSha256,
-        originalAudioSha256: row.originalAudioSha256,
-        transcriptLanguage: row.transcriptLanguage,
-      );
-
-      final filePath = await audioItem.getFullAudioPath();
-      if (!mounted) return;
-      if (filePath == null) {
-        if (word.sentenceText?.trim().isNotEmpty ?? false) {
-          await ref
-              .read(ttsControllerProvider.notifier)
-              .speak(word.sentenceText!);
-        }
-        return;
-      }
-
-      Duration startTime;
-      Duration endTime;
-
-      /// 存储时间是否可信（最少 200ms）
-      const minDurationMs = 200;
-      final storedDurationOk =
-          hasStoredTiming &&
-          (word.sentenceEndMs! - word.sentenceStartMs!) >= minDurationMs;
-
-      if (hasStoredTiming && storedDurationOk) {
-        // 使用冗余存储的时间（不依赖字幕文件）
-        startTime = Duration(milliseconds: word.sentenceStartMs!);
-        endTime = Duration(milliseconds: word.sentenceEndMs!);
-      } else {
-        // 回退：加载字幕获取句子时间信息
-        final srt = await dao.getTranscriptSrt(word.audioItemId!);
-        if (srt == null || srt.isEmpty) {
-          if (word.sentenceText?.trim().isNotEmpty == true) {
-            await ref
-                .read(ttsControllerProvider.notifier)
-                .speak(word.sentenceText!);
-          }
-          return;
-        }
-        final sentences = await SubtitleParser.parseSubtitleString(srt);
-        if (!mounted || sentences.isEmpty) {
-          if (word.sentenceText?.trim().isNotEmpty == true) {
-            await ref
-                .read(ttsControllerProvider.notifier)
-                .speak(word.sentenceText!);
-          }
-          return;
-        }
-
-        // 优先用 sentenceIndex，但若字幕重新生成导致索引错位，
-        // 则通过 sentenceText 匹配找到正确句子
-        final idx = word.sentenceIndex;
-        var sentence = idx != null && idx < sentences.length
-            ? sentences[idx]
-            : null;
-        final storedText = word.sentenceText;
-
-        if (storedText != null &&
-            (sentence == null || sentence.text.trim() != storedText.trim())) {
-          sentence = null;
-          for (final s in sentences) {
-            if (s.text.trim() == storedText.trim()) {
-              sentence = s;
-              break;
-            }
-          }
-        }
-
-        if (sentence == null) {
-          if (word.sentenceText?.trim().isNotEmpty == true) {
-            await ref
-                .read(ttsControllerProvider.notifier)
-                .speak(word.sentenceText!);
-          }
-          return;
-        }
-        startTime = sentence.startTime;
-        endTime = sentence.endTime;
-      }
-
-      final played = await ref
-          .read(shortAudioPlayerProvider)
-          .playRangeFile(filePath, start: startTime, end: endTime);
-      if (!played && word.sentenceText?.trim().isNotEmpty == true) {
-        await ref
-            .read(ttsControllerProvider.notifier)
-            .speak(word.sentenceText!);
-      }
-    } catch (_) {
-      // 忽略播放错误（音频文件不存在等）
-    } finally {
-      if (mounted) {
-        setState(() => _isPlaying = false);
-      }
-    }
-    */
   }
 
   @override

@@ -189,33 +189,50 @@ final textPlaybackProvider =
 class TextPlaybackController extends Notifier<TextPlaybackState> {
   int _sessionId = 0;
   LocalAudioClipPlayer? _player;
+  bool _disposed = false;
 
   @override
   TextPlaybackState build() {
+    _disposed = false;
+    ref.onDispose(() => _disposed = true);
     return const TextPlaybackState();
   }
 
-  /// 统一朗读文本：单个单词优先离线 Opus，未命中、多词或本地播放失败时回退 TTS。
+  /// 统一朗读文本并返回真实播放终态：单个单词优先离线 Opus，未命中、多词或
+  /// 本地播放失败时回退 TTS。
   ///
   /// 通用播放入口均调用本方法，避免页面分别判断离线发音状态而造成预热与点击
-  /// 播放走不同链路。
-  Future<void> speak(String text, {String? key}) async {
+  /// 播放走不同链路。会话被新请求或显式停止抢占时返回 [cancelled]。
+  Future<AudioPlaybackResult> speakWithResult(
+    String text, {
+    String? key,
+  }) async {
     final sessionId = ++_sessionId;
     final playbackKey = key ?? text;
     final clips = ref.read(pronunciationClipsProvider(text));
     if (clips.isNotEmpty) {
-      await play(clips.first, fallbackText: text, fallbackKey: playbackKey);
-      return;
+      return _playWithResult(
+        clips.first,
+        fallbackText: text,
+        fallbackKey: playbackKey,
+        sessionId: sessionId,
+      );
     }
-    if (sessionId != _sessionId) return;
+    if (sessionId != _sessionId) return AudioPlaybackResult.cancelled;
     state = TextPlaybackState(playingKey: playbackKey);
     try {
-      await ref
+      final result = await ref
           .read(ttsControllerProvider.notifier)
-          .speak(text, key: playbackKey);
+          .speakWithResult(text, key: playbackKey);
+      return sessionId == _sessionId ? result : AudioPlaybackResult.cancelled;
     } finally {
       if (sessionId == _sessionId) state = const TextPlaybackState();
     }
+  }
+
+  /// 保留现有普通文本播放入口，实际播放逻辑由 [speakWithResult] 统一实现。
+  Future<void> speak(String text, {String? key}) async {
+    await speakWithResult(text, key: key);
   }
 
   /// 顺序播放单个单词命中的全部离线发音。
@@ -279,8 +296,23 @@ class TextPlaybackController extends Notifier<TextPlaybackState> {
     String? fallbackKey,
   }) async {
     final sessionId = ++_sessionId;
+    await _playWithResult(
+      clip,
+      fallbackText: fallbackText,
+      fallbackKey: fallbackKey,
+      sessionId: sessionId,
+    );
+  }
+
+  Future<AudioPlaybackResult> _playWithResult(
+    PronunciationClip clip, {
+    required String fallbackText,
+    required String? fallbackKey,
+    required int sessionId,
+  }) async {
     state = TextPlaybackState(playingKey: clip.playbackKey);
     await ref.read(ttsControllerProvider.notifier).stop();
+    if (sessionId != _sessionId) return AudioPlaybackResult.cancelled;
     final LocalAudioClipPlayer player;
     final currentPlayer = _player;
     if (currentPlayer != null) {
@@ -289,22 +321,48 @@ class TextPlaybackController extends Notifier<TextPlaybackState> {
       player = ref.read(shortAudioPlayerProvider);
       _player = player;
     }
-    final result = await player.playFile(
-      clip.absolutePath,
-      playbackKey: clip.playbackKey,
-    );
-    if (sessionId != _sessionId) return;
+    AudioPlaybackResult result;
+    try {
+      result = await player.playFile(
+        clip.absolutePath,
+        playbackKey: clip.playbackKey,
+      );
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'TextPlayback',
+        'local pronunciation failed error=$error\n$stackTrace',
+      );
+      result = AudioPlaybackResult.failed;
+    }
+    if (sessionId != _sessionId) return AudioPlaybackResult.cancelled;
     state = const TextPlaybackState();
     if (result == AudioPlaybackResult.failed) {
-      await ref
+      if (sessionId != _sessionId) return AudioPlaybackResult.cancelled;
+      final fallbackResult = await ref
           .read(ttsControllerProvider.notifier)
-          .speak(fallbackText, key: fallbackKey ?? clip.playbackKey);
+          .speakWithResult(fallbackText, key: fallbackKey ?? clip.playbackKey);
+      return sessionId == _sessionId
+          ? fallbackResult
+          : AudioPlaybackResult.cancelled;
     }
+    return result;
   }
 
   Future<void> stop() async {
     _sessionId++;
     await _player?.stop();
+    if (_disposed) return;
+    try {
+      await ref.read(ttsControllerProvider.notifier).stop();
+    } catch (error, stackTrace) {
+      // 页面销毁后的迟到清理可能先于 ProviderContainer 释放完成；此时媒体已经
+      // 被当前播放器会话作废，不能让二次清理异常反向污染页面收尾。
+      AppLogger.log(
+        'TextPlayback',
+        'TTS stop skipped during provider cleanup error=$error\n$stackTrace',
+      );
+    }
+    if (_disposed) return;
     state = const TextPlaybackState();
   }
 }

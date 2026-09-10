@@ -202,6 +202,97 @@ void main() {
     });
   });
 
+  test('允许后台播放但没有实际播放时，进入后台立即停止计时', () {
+    fakeAsync((async) {
+      withClock(async.getClock(DateTime(2026, 9, 8)), () {
+        final service = _RecordingStudyTimeService(db);
+        final timer = StudySessionTimer(
+          studyTimeService: service,
+          stage: StudyStage.freePlayer,
+          activityGate: activityGate,
+          allowBackgroundPlayback: true,
+          checkpointInterval: const Duration(seconds: 10),
+          idleTimeout: const Duration(seconds: 2),
+        );
+
+        timer.start();
+        async.elapse(const Duration(seconds: 1));
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        async.flushMicrotasks();
+
+        final elapsedAtBackground = timer.elapsed;
+        async.elapse(const Duration(seconds: 5));
+        async.flushMicrotasks();
+
+        expect(timer.isRunning, isFalse);
+        expect(timer.elapsed, elapsedAtBackground);
+        expect(
+          service.recordedStudy.fold<int>(
+            0,
+            (sum, duration) => sum + duration.inMilliseconds,
+          ),
+          elapsedAtBackground.inMilliseconds,
+        );
+        expect(
+          service.recordedInput.fold<int>(
+            0,
+            (sum, duration) => sum + duration.inMilliseconds,
+          ),
+          0,
+        );
+
+        final dispose = timer.dispose();
+        async.flushMicrotasks();
+        var disposeCompleted = false;
+        dispose.then((_) => disposeCompleted = true);
+        async.flushMicrotasks();
+        expect(disposeCompleted, isTrue);
+      });
+    });
+  });
+
+  test('后台无播放后回到前台不会自动恢复，新的活动才会恢复', () {
+    fakeAsync((async) {
+      withClock(async.getClock(DateTime(2026, 9, 8)), () {
+        final service = _RecordingStudyTimeService(db);
+        final timer = StudySessionTimer(
+          studyTimeService: service,
+          stage: StudyStage.freePlayer,
+          activityGate: activityGate,
+          allowBackgroundPlayback: true,
+          idleTimeout: const Duration(seconds: 2),
+        );
+
+        timer.start();
+        async.elapse(const Duration(seconds: 1));
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        async.flushMicrotasks();
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        async.elapse(const Duration(seconds: 3));
+        async.flushMicrotasks();
+
+        expect(timer.isRunning, isFalse);
+        final elapsedBeforeActivity = timer.elapsed;
+        timer.markActivity();
+        async.elapse(const Duration(seconds: 1));
+        async.flushMicrotasks();
+
+        expect(timer.isRunning, isTrue);
+        expect(timer.elapsed, greaterThan(elapsedBeforeActivity));
+
+        final dispose = timer.dispose();
+        async.flushMicrotasks();
+        var disposeCompleted = false;
+        dispose.then((_) => disposeCompleted = true);
+        async.flushMicrotasks();
+        expect(disposeCompleted, isTrue);
+      });
+    });
+  });
+
   test('播放暂停后仍可统计用户思考时间，但不增加输入时长', () async {
     final timer = StudySessionTimer(
       studyTimeService: StudyTimeService(

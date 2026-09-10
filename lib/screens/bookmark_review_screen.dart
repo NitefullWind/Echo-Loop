@@ -11,7 +11,6 @@ import '../features/chatbot/widgets/sentence_chat_button.dart';
 import '../features/memory_scheduler/domain/memory_rating.dart';
 import '../features/memory_scheduler/domain/memory_scheduler_results.dart';
 import '../features/scheduled_flashcard/widgets/flashcard_rating_action_bar.dart';
-import '../features/scheduled_flashcard/domain/review_session_summary.dart';
 import '../l10n/app_localizations.dart';
 import '../models/bookmark_sentence.dart';
 import '../providers/audio_engine/foreground_audio_engine_provider.dart';
@@ -29,6 +28,7 @@ import '../widgets/practice/sentence_explanation_view.dart';
 import '../widgets/bookmark_review/bookmark_review_settings_sheet.dart';
 import '../widgets/review/review_status_bar.dart';
 import '../widgets/review/review_completion_summary.dart';
+import '../widgets/study/study_activity_detector.dart';
 
 class BookmarkReviewScreen extends ConsumerStatefulWidget {
   const BookmarkReviewScreen({super.key});
@@ -107,141 +107,155 @@ class _BookmarkReviewScreenState extends ConsumerState<BookmarkReviewScreen>
     setState(() => _isDictionaryPanelOpen = isOpen);
   }
 
+  /// 仅把显式完成摘要映射为完成页，避免退出清理的空状态误触发完成态。
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(bookmarkReviewProvider);
     final card = state.currentCard;
     final completionSummary = state.completionSummary;
-    final displaySummary = completionSummary ?? const ReviewSessionSummary();
     final l10n = AppLocalizations.of(context)!;
     final player = ref.read(bookmarkReviewProvider.notifier);
 
-    return wakelockBody(
-      child: PopScope(
-        // 仅在词典面板打开时拦截返回；固定为 false 会禁用 iOS 边缘返回手势。
-        canPop: !_isDictionaryPanelOpen,
-        onPopInvokedWithResult: (didPop, _) {
-          if (didPop) {
-            // 原生返回手势已完成，只释放会话，避免再次触发 pop。
-            if (!_isExiting) {
-              _isExiting = true;
-              unawaited(
-                ref.read(bookmarkReviewProvider.notifier).disposeSession(),
-              );
+    return StudyActivityDetector(
+      onActivity: player.markStudyActivity,
+      child: wakelockBody(
+        child: PopScope(
+          // 仅在词典面板打开时拦截返回；固定为 false 会禁用 iOS 边缘返回手势。
+          canPop: !_isDictionaryPanelOpen,
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop) {
+              // 原生返回手势已完成，只释放会话，避免再次触发 pop。
+              if (!_isExiting) {
+                _isExiting = true;
+                unawaited(
+                  ref.read(bookmarkReviewProvider.notifier).disposeSession(),
+                );
+              }
+              return;
             }
-            return;
-          }
-          if (_dictionaryHostKey.currentState?.closeIfOpen() == true) {
-            return;
-          }
-          unawaited(_exit());
-        },
-        child: Scaffold(
-          appBar: AppBar(
-            actionsPadding: const EdgeInsets.only(right: AppSpacing.s),
-            leading: IconButton(
-              key: const Key('bookmark-review-close'),
-              onPressed: _exit,
-              icon: const Icon(Icons.arrow_back),
-            ),
-            title: Text(l10n.bookmarkReviewTitle),
-            centerTitle: true,
-            actions: [
-              SentenceChatButton(
-                sentenceText: card?.sentence.text ?? '',
-                onBeforeOpen: () => unawaited(player.interruptPlayback()),
+            if (_dictionaryHostKey.currentState?.closeIfOpen() == true) {
+              return;
+            }
+            unawaited(_exit());
+          },
+          child: Scaffold(
+            appBar: AppBar(
+              actionsPadding: const EdgeInsets.only(right: AppSpacing.s),
+              leading: IconButton(
+                key: const Key('bookmark-review-close'),
+                onPressed: _exit,
+                icon: const Icon(Icons.arrow_back),
               ),
-              IconButton(
-                key: const Key('bookmark-review-settings'),
-                onPressed: _openSettings,
-                icon: const Icon(Icons.tune),
-              ),
-            ],
-          ),
-          body: card == null
-              ? ReviewCompletionSummary(
-                  title: l10n.bookmarkReviewCompleted,
-                  summary: displaySummary,
-                  onExit: _exit,
-                  doneLabel: l10n.done,
-                  durationLabel: l10n.reviewStatisticsDuration,
-                  reviewedLabel: l10n.reviewCompletionReviewed,
-                  retentionLabel: l10n.reviewStatisticsRetentionRate,
-                  ratingsLabel: l10n.reviewStatisticsRatings,
-                  againLabel: l10n.bookmarkReviewRatingAgain,
-                  goodLabel: l10n.bookmarkReviewRatingGood,
-                  easyLabel: l10n.bookmarkReviewRatingEasy,
-                )
-              : DictionaryPanelHost(
-                  key: _dictionaryHostKey,
-                  onOpenStateChanged: _handleDictionaryPanelOpenStateChanged,
-                  child: Column(
-                    children: [
-                      _ReviewProgress(
-                        progress: state.progress,
-                        source: l10n.bookmarkReviewFromAudio(card.audioName),
-                        duration: l10n.sentenceDuration(
-                          (card.sentence.duration.inMilliseconds / 1000)
-                              .toStringAsFixed(1),
-                        ),
-                        isRemoving: state.isRemoving,
-                        onRemove: _removeCurrent,
-                      ),
-                      Expanded(
-                        child: state.face == BookmarkReviewFace.front
-                            ? _ListeningFront(
-                                playbackState: state.playbackState,
-                                hasError: state.mediaError != null,
-                                onReplay: () =>
-                                    unawaited(player.replayCurrent()),
-                                onReveal: () => unawaited(player.revealBack()),
-                              )
-                            : ProviderScope(
-                                overrides: [
-                                  senseGroupRangePlaybackProvider.overrideWith(
-                                    (ref) => ForegroundSenseGroupRangePlayback(
-                                      engine: ref.read(
-                                        foregroundAudioEngineProvider.notifier,
-                                      ),
-                                      playbackSpeed: () => 1.0,
-                                    ),
-                                  ),
-                                ],
-                                child: _ReviewAnswer(
-                                  card: card,
-                                  preview: state.preview,
-                                  showNextReviewTime: ref.watch(
-                                    favoriteReviewSettingsProvider.select(
-                                      (settings) => settings.showNextReviewTime,
-                                    ),
-                                  ),
-                                  isSubmitting: state.isSubmittingRating,
-                                  playbackState: state.playbackState,
-                                  onTogglePlayback: () =>
-                                      unawaited(player.toggleCurrentPlayback()),
-                                  onRating: (rating) =>
-                                      unawaited(player.selectRating(rating)),
-                                ),
-                              ),
-                      ),
-                      ReviewStatusBar(
-                        key: const Key('bookmark-review-status-bar'),
-                        elapsed: () => player.elapsed,
-                        reviewedCount: state.reviewedCount,
-                        remainingCount: state.remainingCount,
-                        elapsedLabel:
-                            Localizations.localeOf(context).languageCode == 'zh'
-                            ? '学习时长'
-                            : 'Study time',
-                        reviewedLabel:
-                            Localizations.localeOf(context).languageCode == 'zh'
-                            ? '已复习'
-                            : 'Reviewed',
-                        remainingLabel: l10n.reviewStatusRemaining,
-                      ),
-                    ],
-                  ),
+              title: Text(l10n.bookmarkReviewTitle),
+              centerTitle: true,
+              actions: [
+                SentenceChatButton(
+                  sentenceText: card?.sentence.text ?? '',
+                  onBeforeOpen: () => unawaited(player.interruptPlayback()),
                 ),
+                IconButton(
+                  key: const Key('bookmark-review-settings'),
+                  onPressed: _openSettings,
+                  icon: const Icon(Icons.tune),
+                ),
+              ],
+            ),
+            // 当前卡片为空可能是退出清理，只有显式完成摘要才代表复习完成。
+            body: completionSummary != null
+                ? ReviewCompletionSummary(
+                    title: l10n.bookmarkReviewCompleted,
+                    summary: completionSummary,
+                    onExit: _exit,
+                    doneLabel: l10n.done,
+                    durationLabel: l10n.reviewStatisticsDuration,
+                    reviewedLabel: l10n.reviewCompletionReviewed,
+                    retentionLabel: l10n.reviewStatisticsRetentionRate,
+                    ratingsLabel: l10n.reviewStatisticsRatings,
+                    againLabel: l10n.bookmarkReviewRatingAgain,
+                    goodLabel: l10n.bookmarkReviewRatingGood,
+                    easyLabel: l10n.bookmarkReviewRatingEasy,
+                  )
+                : card == null
+                ? const SizedBox.shrink()
+                : DictionaryPanelHost(
+                    key: _dictionaryHostKey,
+                    onOpenStateChanged: _handleDictionaryPanelOpenStateChanged,
+                    child: Column(
+                      children: [
+                        _ReviewProgress(
+                          progress: state.progress,
+                          source: l10n.bookmarkReviewFromAudio(card.audioName),
+                          duration: l10n.sentenceDuration(
+                            (card.sentence.duration.inMilliseconds / 1000)
+                                .toStringAsFixed(1),
+                          ),
+                          isRemoving: state.isRemoving,
+                          onRemove: _removeCurrent,
+                        ),
+                        Expanded(
+                          child: state.face == BookmarkReviewFace.front
+                              ? _ListeningFront(
+                                  playbackState: state.playbackState,
+                                  hasError: state.mediaError != null,
+                                  onReplay: () =>
+                                      unawaited(player.replayCurrent()),
+                                  onReveal: () =>
+                                      unawaited(player.revealBack()),
+                                )
+                              : ProviderScope(
+                                  overrides: [
+                                    senseGroupRangePlaybackProvider
+                                        .overrideWith(
+                                          (ref) =>
+                                              ForegroundSenseGroupRangePlayback(
+                                                engine: ref.read(
+                                                  foregroundAudioEngineProvider
+                                                      .notifier,
+                                                ),
+                                                playbackSpeed: () => 1.0,
+                                              ),
+                                        ),
+                                  ],
+                                  child: _ReviewAnswer(
+                                    card: card,
+                                    preview: state.preview,
+                                    showNextReviewTime: ref.watch(
+                                      favoriteReviewSettingsProvider.select(
+                                        (settings) =>
+                                            settings.showNextReviewTime,
+                                      ),
+                                    ),
+                                    isSubmitting: state.isSubmittingRating,
+                                    playbackState: state.playbackState,
+                                    onTogglePlayback: () => unawaited(
+                                      player.toggleCurrentPlayback(),
+                                    ),
+                                    onRating: (rating) =>
+                                        unawaited(player.selectRating(rating)),
+                                  ),
+                                ),
+                        ),
+                        ReviewStatusBar(
+                          key: const Key('bookmark-review-status-bar'),
+                          elapsed: () => player.elapsed,
+                          reviewedCount: state.reviewedCount,
+                          remainingCount: state.remainingCount,
+                          elapsedLabel:
+                              Localizations.localeOf(context).languageCode ==
+                                  'zh'
+                              ? '学习时长'
+                              : 'Study time',
+                          reviewedLabel:
+                              Localizations.localeOf(context).languageCode ==
+                                  'zh'
+                              ? '已复习'
+                              : 'Reviewed',
+                          remainingLabel: l10n.reviewStatusRemaining,
+                        ),
+                      ],
+                    ),
+                  ),
+          ),
         ),
       ),
     );

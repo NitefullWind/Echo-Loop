@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:echo_loop/database/daos/bookmark_dao.dart';
 import 'package:echo_loop/database/providers.dart';
 import 'package:echo_loop/features/onboarding_survey/providers/onboarding_survey_provider.dart';
@@ -5,6 +7,7 @@ import 'package:echo_loop/features/memory_scheduler/domain/memory_rating.dart';
 import 'package:echo_loop/features/memory_scheduler/domain/memory_model_adapter.dart';
 import 'package:echo_loop/features/memory_scheduler/domain/memory_scheduler_results.dart';
 import 'package:echo_loop/features/memory_scheduler/domain/memory_schedule.dart';
+import 'package:echo_loop/features/scheduled_flashcard/domain/review_session_summary.dart';
 import 'package:echo_loop/l10n/app_localizations.dart';
 import 'package:echo_loop/models/bookmark_sentence.dart';
 import 'package:echo_loop/models/dict_entry.dart';
@@ -93,6 +96,10 @@ class _EchoDictionarySource implements DictionarySource {
 }
 
 class _TestBookmarkReview extends BookmarkReview {
+  _TestBookmarkReview({this.disposeSessionWaiter});
+
+  final Future<void> Function()? disposeSessionWaiter;
+
   @override
   BookmarkReviewState build() {
     final now = DateTime.now().toUtc();
@@ -168,7 +175,12 @@ class _TestBookmarkReview extends BookmarkReview {
   }
 
   @override
-  Future<void> disposeSession() async {}
+  Future<void> disposeSession() async {
+    state = const BookmarkReviewState();
+    final waiter = disposeSessionWaiter;
+    if (waiter != null) await waiter();
+  }
+
   @override
   Future<void> revealBack() async {
     state = state.copyWith(face: BookmarkReviewFace.back);
@@ -176,7 +188,10 @@ class _TestBookmarkReview extends BookmarkReview {
 
   @override
   Future<void> removeCurrentBookmark() async {
-    state = const BookmarkReviewState();
+    state = state.copyWith(
+      clearCurrentCard: true,
+      completionSummary: const ReviewSessionSummary(),
+    );
   }
 }
 
@@ -191,7 +206,11 @@ final _dictionarySource = _EchoDictionarySource();
 Finder get _bookmarkReviewPopScope =>
     find.byWidgetPredicate((widget) => widget is PopScope);
 
-Widget _app({Locale locale = const Locale('zh'), GoRouter? router}) {
+Widget _app({
+  Locale locale = const Locale('zh'),
+  GoRouter? router,
+  Future<void> Function()? disposeSessionWaiter,
+}) {
   final child = router == null
       ? MaterialApp(
           locale: locale,
@@ -219,7 +238,9 @@ Widget _app({Locale locale = const Locale('zh'), GoRouter? router}) {
         );
   return ProviderScope(
     overrides: [
-      bookmarkReviewProvider.overrideWith(_TestBookmarkReview.new),
+      bookmarkReviewProvider.overrideWith(
+        () => _TestBookmarkReview(disposeSessionWaiter: disposeSessionWaiter),
+      ),
       bookmarkDaoProvider.overrideWithValue(_TestDao()),
       audioItemDaoProvider.overrideWithValue(FakeAudioItemDao()),
       sentenceAiNotifierProvider.overrideWithValue(
@@ -287,6 +308,10 @@ void main() {
   testWidgets(
     'close falls back to favorites when the review route cannot pop',
     (tester) async {
+      final disposeGate = Completer<void>();
+      addTearDown(() {
+        if (!disposeGate.isCompleted) disposeGate.complete();
+      });
       final router = GoRouter(
         initialLocation: '/bookmark-review',
         routes: [
@@ -298,13 +323,24 @@ void main() {
           GoRoute(
             path: '/bookmark-review',
             builder: (context, state) => const BookmarkReviewScreen(),
+            onExit: (_, __) async {
+              await disposeGate.future;
+              return true;
+            },
           ),
         ],
       );
-      await tester.pumpWidget(_app(router: router));
+      await tester.pumpWidget(
+        _app(router: router, disposeSessionWaiter: () => disposeGate.future),
+      );
       await tester.pump();
 
       await tester.tap(find.byKey(const Key('bookmark-review-close')));
+      await tester.pump();
+
+      expect(find.byType(ReviewCompletionSummary), findsNothing);
+
+      disposeGate.complete();
       await tester.pumpAndSettle();
 
       expect(router.state.uri.path, '/favorites');

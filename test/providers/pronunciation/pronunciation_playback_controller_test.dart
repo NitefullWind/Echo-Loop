@@ -53,13 +53,18 @@ class _FakeBackend implements AudioClipPlayerBackend {
 
 class _FakeTtsController extends TtsController {
   final spoken = <String>[];
+  AudioPlaybackResult result = AudioPlaybackResult.completed;
 
   @override
   TtsControllerState build() => const TtsControllerState();
 
   @override
-  Future<void> speak(String text, {String? key}) async {
+  Future<AudioPlaybackResult> speakWithResult(
+    String text, {
+    String? key,
+  }) async {
     spoken.add(text);
+    return result;
   }
 
   @override

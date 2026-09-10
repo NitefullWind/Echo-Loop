@@ -1,12 +1,11 @@
-/// 收藏词汇闪卡复习状态与控制器（本步仅实现正面）。
+/// 收藏词汇闪卡复习状态与控制器。
 ///
 /// 会话状态机复用通用调度引擎 `ScheduledFlashcardController<FlashcardItem>`
 /// （`lib/features/scheduled_flashcard/`），机制与 `BookmarkReview`
 /// （收藏句复习）完全一致；区别只在于：
 /// - 正面重播调用的是词汇收藏列表同款的 `textPlaybackProvider`
 ///   （离线发音库优先，回退 TTS），不是收藏句用的前台音频引擎；
-/// - 本步翻到背面只做状态流转（`face` 置为 back），不取 preview、不接评分，
-///   反面内容留待后续任务。
+/// - 背面复用调度器的评分预览，并支持来源句原音区间与 TTS 兜底播放。
 /// 所有播放操作都用 generation 隔离，切卡、翻面和退出后，旧异步回调不能恢复
 /// 播放或污染状态。
 library;
@@ -27,6 +26,7 @@ import '../../features/scheduled_flashcard/domain/review_session_summary.dart';
 import '../../models/flashcard_item.dart';
 import '../../models/study_stage.dart';
 import '../../services/app_logger.dart';
+import '../../services/pronunciation/local_audio_clip_player.dart';
 import '../../services/study_session_timer.dart';
 import '../favorite_review_settings_provider.dart';
 import '../favorite_vocabulary_lifecycle_provider.dart';
@@ -123,9 +123,13 @@ class FavoriteVocabularyReview extends _$FavoriteVocabularyReview {
   StudySessionTimer? _studySessionTimer;
   ScheduledFlashcardController<FlashcardItem>? _controller;
   ReviewSessionSummary _summary = const ReviewSessionSummary();
+  Future<void>? _disposeSessionInFlight;
 
   /// 当前收藏词汇复习会话的前台有效时长。
   Duration get elapsed => _studySessionTimer?.elapsed ?? Duration.zero;
+
+  /// 标记用户仍在收藏词汇复习页面活动，让页面级计时器恢复前台计时。
+  void markStudyActivity() => _studySessionTimer?.markActivity();
 
   @override
   FavoriteVocabularyReviewState build() {
@@ -186,13 +190,15 @@ class FavoriteVocabularyReview extends _$FavoriteVocabularyReview {
     );
     if (completionSummary != null) return;
     // 每次新建复习快照都创建新的计时会话，避免复用已停止的 timer。
-    _studySessionTimer = StudySessionTimer(
+    final timer = StudySessionTimer(
       studyTimeService: ref.read(studyTimeServiceProvider),
       stage: StudyStage.savedVocabularyReview,
       activityGate: ref.read(studyActivityGateProvider),
+      idleTimeout: const Duration(minutes: 2),
       logScope: 'SavedVocabularyReviewTimer',
     );
-    _studySessionTimer!.start();
+    _studySessionTimer = timer;
+    timer.start();
   }
 
   /// 仅在共享偏好开启时自动播放正面；手动重播不受该偏好影响。
@@ -210,6 +216,7 @@ class FavoriteVocabularyReview extends _$FavoriteVocabularyReview {
     final player = ref.read(textPlaybackProvider.notifier);
     await player.stop();
     if (!_isCurrent(generation, card)) return;
+    markStudyActivity();
     state = state.copyWith(
       wordPlaybackState: FavoriteVocabularyReviewPlaybackState.loading,
       sourcePlaybackState: FavoriteVocabularyReviewPlaybackState.idle,
@@ -220,12 +227,36 @@ class FavoriteVocabularyReview extends _$FavoriteVocabularyReview {
       state = state.copyWith(
         wordPlaybackState: FavoriteVocabularyReviewPlaybackState.playing,
       );
+      final stopwatch = Stopwatch()..start();
       // 与查词弹窗和收藏词汇列表共用同一默认朗读入口：多发音时播稳定排序后的第一条。
-      await player.speak(card.displayText, key: card.dbKey);
-      if (!_isCurrent(generation, card)) return;
-      state = state.copyWith(
-        wordPlaybackState: FavoriteVocabularyReviewPlaybackState.idle,
-      );
+      try {
+        final result = await player.speakWithResult(
+          card.displayText,
+          key: card.dbKey,
+        );
+        if (!_isCurrent(generation, card)) return;
+        switch (result) {
+          case AudioPlaybackResult.completed:
+            _recordCompletedVocabularyPlayback(
+              text: card.displayText,
+              duration: stopwatch.elapsed,
+            );
+            state = state.copyWith(
+              wordPlaybackState: FavoriteVocabularyReviewPlaybackState.idle,
+            );
+          case AudioPlaybackResult.cancelled:
+            state = state.copyWith(
+              wordPlaybackState: FavoriteVocabularyReviewPlaybackState.idle,
+            );
+          case AudioPlaybackResult.failed:
+            state = state.copyWith(
+              wordPlaybackState: FavoriteVocabularyReviewPlaybackState.failed,
+              mediaError: 'audio_unavailable',
+            );
+        }
+      } finally {
+        stopwatch.stop();
+      }
     } catch (error, stackTrace) {
       if (!_isCurrent(generation, card)) return;
       AppLogger.log(
@@ -278,9 +309,11 @@ class FavoriteVocabularyReview extends _$FavoriteVocabularyReview {
   /// 按收藏词汇列表同一契约播放来源句：原音区间优先，失败才回退 TTS。
   Future<void> playSourceSentence() async {
     final card = state.currentCard;
+    final sentenceText = card?.sentenceText;
     if (card == null ||
         state.face != FavoriteVocabularyReviewFace.back ||
-        card.sentenceText?.trim().isEmpty != false) {
+        sentenceText == null ||
+        sentenceText.trim().isEmpty) {
       return;
     }
     final generation = ++_generation;
@@ -290,23 +323,44 @@ class FavoriteVocabularyReview extends _$FavoriteVocabularyReview {
     final player = SourceSentencePlayer(
       audioItemDao: ref.read(audioItemDaoProvider),
       audioClipPlayer: ref.read(shortAudioPlayerProvider),
-      speak: (text, key) =>
-          ref.read(ttsControllerProvider.notifier).speak(text, key: key),
+      isPlaybackCurrent: () => _isCurrent(generation + 1, card),
+      speak: (text, key) => ref
+          .read(ttsControllerProvider.notifier)
+          .speakWithResult(text, key: key),
     );
     try {
       _hasSourcePlayback = true;
+      markStudyActivity();
       state = state.copyWith(
         wordPlaybackState: FavoriteVocabularyReviewPlaybackState.idle,
         sourcePlaybackState: FavoriteVocabularyReviewPlaybackState.playing,
       );
-      await player.play(
-        audioItemId: card.audioItemId,
-        sentenceIndex: card.sentenceIndex,
-        sentenceText: card.sentenceText,
-        sentenceStartMs: card.sentenceStartMs,
-        sentenceEndMs: card.sentenceEndMs,
-        playbackKey: playbackKey,
-      );
+      final stopwatch = Stopwatch()..start();
+      try {
+        final result = await player.play(
+          audioItemId: card.audioItemId,
+          sentenceIndex: card.sentenceIndex,
+          sentenceText: sentenceText,
+          sentenceStartMs: card.sentenceStartMs,
+          sentenceEndMs: card.sentenceEndMs,
+          playbackKey: playbackKey,
+        );
+        if (_isCurrent(generation + 1, card)) {
+          switch (result) {
+            case AudioPlaybackResult.completed:
+              _recordCompletedVocabularyPlayback(
+                text: sentenceText,
+                duration: stopwatch.elapsed,
+              );
+            case AudioPlaybackResult.cancelled:
+              break;
+            case AudioPlaybackResult.failed:
+              state = state.copyWith(mediaError: 'audio_unavailable');
+          }
+        }
+      } finally {
+        stopwatch.stop();
+      }
     } catch (error, stackTrace) {
       AppLogger.log(
         'FavoriteVocabularyReview',
@@ -441,12 +495,63 @@ class FavoriteVocabularyReview extends _$FavoriteVocabularyReview {
     }
   }
 
-  Future<void> disposeSession() async {
-    await interruptPlayback();
-    await _studySessionTimer?.stop();
-    _controller?.dispose();
-    _controller = null;
-    state = const FavoriteVocabularyReviewState();
+  /// 幂等结束复习会话，确保退出路由和页面回调不会重复清理资源或漏刷统计。
+  Future<void> disposeSession() {
+    final inFlight = _disposeSessionInFlight;
+    if (inFlight != null) return inFlight;
+    final operation = _disposeSessionImpl();
+    late final Future<void> tracked;
+    tracked = operation.whenComplete(() {
+      if (identical(_disposeSessionInFlight, tracked)) {
+        _disposeSessionInFlight = null;
+      }
+    });
+    _disposeSessionInFlight = tracked;
+    return tracked;
+  }
+
+  Future<void> _disposeSessionImpl() async {
+    try {
+      await interruptPlayback();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'favorite vocabulary playback cleanup failed error=$error\n$stackTrace',
+      );
+    }
+
+    final timer = _studySessionTimer;
+    try {
+      await timer?.stop();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'favorite vocabulary timer stop failed error=$error\n$stackTrace',
+      );
+    }
+    try {
+      await ref.read(studyTimeServiceProvider).flush();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'favorite vocabulary statistics flush failed error=$error\n$stackTrace',
+      );
+    } finally {
+      try {
+        await timer?.dispose();
+      } catch (error, stackTrace) {
+        AppLogger.log(
+          'StudyExit',
+          'favorite vocabulary timer cleanup failed error=$error\n$stackTrace',
+        );
+      }
+      if (identical(_studySessionTimer, timer)) {
+        _studySessionTimer = null;
+      }
+      _controller?.dispose();
+      _controller = null;
+      state = const FavoriteVocabularyReviewState();
+    }
   }
 
   /// 将通用会话的当前项和计数映射为页面所需的最小状态。
@@ -470,7 +575,7 @@ class FavoriteVocabularyReview extends _$FavoriteVocabularyReview {
     if (controller.state.phase != ScheduledFlashcardPhase.completed) {
       return null;
     }
-    unawaited(_studySessionTimer?.stop());
+    unawaited(_stopTimerSafely());
     return _summary.complete(
       elapsed: _studySessionTimer?.elapsed ?? Duration.zero,
       reviewedCount: controller.state.reviewedCount,
@@ -479,4 +584,29 @@ class FavoriteVocabularyReview extends _$FavoriteVocabularyReview {
 
   bool _isCurrent(int generation, FlashcardItem card) =>
       generation == _generation && identical(state.currentCard, card);
+
+  /// 只有完整朗读才提交输入统计；中断、切卡和退出都不会调用此方法。
+  void _recordCompletedVocabularyPlayback({
+    required String text,
+    required Duration duration,
+  }) {
+    ref
+        .read(studyTimeServiceProvider)
+        .submitSentencePlayback(
+          duration: duration,
+          text: text,
+          stage: StudyStage.savedVocabularyReview,
+        );
+  }
+
+  Future<void> _stopTimerSafely() async {
+    try {
+      await _studySessionTimer?.stop();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'favorite vocabulary timer stop failed error=$error\n$stackTrace',
+      );
+    }
+  }
 }

@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:echo_loop/database/app_database.dart';
 import 'package:echo_loop/features/memory_scheduler/domain/memory_rating.dart';
 import 'package:echo_loop/features/memory_scheduler/domain/memory_model_adapter.dart';
 import 'package:echo_loop/features/memory_scheduler/domain/memory_scheduler_results.dart';
 import 'package:echo_loop/features/memory_scheduler/domain/memory_schedule.dart';
+import 'package:echo_loop/features/scheduled_flashcard/domain/review_session_summary.dart';
 import 'package:echo_loop/l10n/app_localizations.dart';
 import 'package:echo_loop/models/dict_entry.dart';
 import 'package:echo_loop/models/dictionary/dictionary_lookup_result.dart';
@@ -87,10 +90,12 @@ class _TestFavoriteVocabularyReview extends FavoriteVocabularyReview {
   _TestFavoriteVocabularyReview({
     this.withSource = false,
     this.vocabulary = 'apple',
+    this.disposeSessionWaiter,
   });
 
   final bool withSource;
   final String vocabulary;
+  final Future<void> Function()? disposeSessionWaiter;
 
   @override
   FavoriteVocabularyReviewState build() {
@@ -158,11 +163,18 @@ class _TestFavoriteVocabularyReview extends FavoriteVocabularyReview {
 
   @override
   Future<void> removeCurrentVocabulary() async {
-    state = const FavoriteVocabularyReviewState();
+    state = state.copyWith(
+      clearCurrentCard: true,
+      completionSummary: const ReviewSessionSummary(),
+    );
   }
 
   @override
-  Future<void> disposeSession() async {}
+  Future<void> disposeSession() async {
+    state = const FavoriteVocabularyReviewState();
+    final waiter = disposeSessionWaiter;
+    if (waiter != null) await waiter();
+  }
 }
 
 class _TestLocalDictionarySource extends LocalDictionarySource {
@@ -190,6 +202,7 @@ Widget _app({
   String vocabulary = 'apple',
   List<PronunciationClip> pronunciationClips = const [],
   GoRouter? router,
+  Future<void> Function()? disposeSessionWaiter,
 }) {
   final child = router == null
       ? MaterialApp(
@@ -222,6 +235,7 @@ Widget _app({
         () => _TestFavoriteVocabularyReview(
           withSource: withSource,
           vocabulary: vocabulary,
+          disposeSessionWaiter: disposeSessionWaiter,
         ),
       ),
       favoriteReviewSettingsProvider.overrideWith(
@@ -444,6 +458,10 @@ void main() {
   testWidgets(
     'close falls back to favorites when the review route cannot pop',
     (tester) async {
+      final disposeGate = Completer<void>();
+      addTearDown(() {
+        if (!disposeGate.isCompleted) disposeGate.complete();
+      });
       final router = GoRouter(
         initialLocation: '/favorite-vocabulary-review',
         routes: [
@@ -455,15 +473,26 @@ void main() {
           GoRoute(
             path: '/favorite-vocabulary-review',
             builder: (context, state) => const FavoriteVocabularyReviewScreen(),
+            onExit: (_, __) async {
+              await disposeGate.future;
+              return true;
+            },
           ),
         ],
       );
-      await tester.pumpWidget(_app(router: router));
+      await tester.pumpWidget(
+        _app(router: router, disposeSessionWaiter: () => disposeGate.future),
+      );
       await tester.pump();
 
       await tester.tap(
         find.byKey(const Key('favorite-vocabulary-review-close')),
       );
+      await tester.pump();
+
+      expect(find.byType(ReviewCompletionSummary), findsNothing);
+
+      disposeGate.complete();
       await tester.pumpAndSettle();
 
       expect(router.state.uri.path, '/favorites');

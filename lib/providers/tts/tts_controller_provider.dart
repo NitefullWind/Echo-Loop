@@ -16,6 +16,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../database/providers.dart';
 import '../../services/app_logger.dart';
+import '../../services/pronunciation/local_audio_clip_player.dart';
 import '../../services/tts/kokoro_tts_engine.dart';
 import '../../services/tts/kokoro_voices.dart';
 import '../../services/tts/piper_tts_engine.dart';
@@ -234,30 +235,51 @@ class TtsController extends Notifier<TtsControllerState> {
     state = _stateWithSpeaking(state.speakingKey);
   }
 
-  /// 发音 [text]。[key] 标识发音项（默认用文本本身），供按钮激活态匹配。
+  /// 发音 [text] 并返回真实播放终态。[key] 标识发音项。
   ///
-  /// fire-and-forget 调用方无需 await；连续调用由协调器打断重播。
-  Future<void> speak(String text, {String? key}) async {
+  /// 协调器当前返回 bool；控制器结合自身 speaking token 将被新请求抢占的
+  /// 旧结果区分为 [AudioPlaybackResult.cancelled]，避免上层把失败误记为完成。
+  Future<AudioPlaybackResult> speakWithResult(
+    String text, {
+    String? key,
+  }) async {
     // 必须在模型检查前登记代际：模型加载/弹窗等待期间关闭词典时，stop()
     // 递增代际，旧请求回来后不得再继续设置播放状态或启动协调器。
     final token = ++_speakingToken;
-    if (!await ensureTtsModelReadyForPlayback(ref)) return;
-    if (token != _speakingToken) return;
-    if (!await warmUpCurrentEngine()) return;
-    if (token != _speakingToken) return;
     final k = key ?? text;
-    state = _stateWithSpeaking(k);
     try {
+      if (!await ensureTtsModelReadyForPlayback(ref)) {
+        return _resultForToken(token, success: false);
+      }
+      if (token != _speakingToken) return AudioPlaybackResult.cancelled;
+      if (!await warmUpCurrentEngine()) {
+        return _resultForToken(token, success: false);
+      }
+      if (token != _speakingToken) return AudioPlaybackResult.cancelled;
+      state = _stateWithSpeaking(k);
       final ok = await _readyCoordinator.speak(text);
-      AppLogger.log('TtsController', '用户发音结束：${ok ? '成功' : '未完成或失败'} 缓存键=$k');
-    } catch (e, st) {
-      // fire-and-forget 调用方不会捕获，必须在此落日志，避免静默吞异常。
-      AppLogger.log('TtsController', '✗ 用户发音异常：$e\n$st');
+      final result = _resultForToken(token, success: ok);
+      AppLogger.log('TtsController', '用户发音结束：$result 缓存键=$k');
+      return result;
+    } catch (error, stackTrace) {
+      AppLogger.log('TtsController', '✗ 用户发音异常：$error\n$stackTrace');
+      return _resultForToken(token, success: false);
+    } finally {
+      // 仅当未被新发音抢占时才复位，被抢占时 speakingKey 已归新请求所有。
+      if (token == _speakingToken && state.speakingKey == k) {
+        state = _stateWithSpeaking(null);
+      }
     }
-    // 仅当未被新发音抢占时才复位（被抢占时 speakingKey 已变）。
-    if (token == _speakingToken && state.speakingKey == k) {
-      state = _stateWithSpeaking(null);
-    }
+  }
+
+  /// 保留普通发音调用方的 fire-and-forget 入口，实际播放逻辑只有结果型实现一套。
+  Future<void> speak(String text, {String? key}) async {
+    await speakWithResult(text, key: key);
+  }
+
+  AudioPlaybackResult _resultForToken(int token, {required bool success}) {
+    if (token != _speakingToken) return AudioPlaybackResult.cancelled;
+    return success ? AudioPlaybackResult.completed : AudioPlaybackResult.failed;
   }
 
   /// 试听某 Kokoro 音色：用该音色（及其口音、当前模型变体）朗读示范句。

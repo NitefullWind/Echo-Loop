@@ -47,7 +47,10 @@ final class StudySessionTimer {
   final StudyStage _stage;
   final StudyActivityGate _activityGate;
 
-  /// 由具体学习任务声明是否允许后台继续累计播放统计。
+  /// 由具体学习任务声明是否允许实际播放在后台继续累计统计。
+  ///
+  /// 该开关只对 [_playbackActive] 为 true 的状态生效；后台暂停时仍必须停止
+  /// 总学习时长，避免把后台驻留误记为用户学习活动。
   final bool allowBackgroundPlayback;
   final Duration checkpointInterval;
   final Duration? idleTimeout;
@@ -82,17 +85,13 @@ final class StudySessionTimer {
     if (_stopped || _started) return;
     _started = true;
     _studyActive = true;
-    if (_activityGate.isForeground || allowBackgroundPlayback) {
-      _startTiming();
-    }
+    _startTiming();
     AppLogger.log(_logScope, 'session.start stage=${_stage.name}');
   }
 
   /// 标记一次用户活动，并在 idle 后自动恢复总学习时长。
   void markActivity() {
-    if (!_started ||
-        _stopped ||
-        (!_activityGate.isForeground && !allowBackgroundPlayback)) {
+    if (!_started || _stopped || !_activityGate.isForeground) {
       return;
     }
     final resumesFromIdle = !_studyActive;
@@ -114,14 +113,19 @@ final class StudySessionTimer {
   void setPlaybackActive(bool active) {
     if (!_started || _stopped) return;
     _playbackActive = active;
-    if (!_activityGate.isForeground && !allowBackgroundPlayback) return;
     if (active) {
       _studyActive = true;
       _startTiming();
-      _scheduleIdleTimeout();
       return;
     }
     _inputStopwatch.stop();
+    if (!_activityGate.isForeground) {
+      if (allowBackgroundPlayback) {
+        _studyActive = false;
+        unawaited(_flushFromActivityChange());
+      }
+      return;
+    }
     // 播放结束本身是一次学习会话事件，为用户继续思考保留 idle 窗口。
     markActivity();
   }
@@ -203,8 +207,7 @@ final class StudySessionTimer {
   }
 
   void _startTiming() {
-    if ((!_activityGate.isForeground && !allowBackgroundPlayback) ||
-        (!_studyActive && !_playbackActive)) {
+    if (!_canAccumulateStudyTime || (!_studyActive && !_playbackActive)) {
       return;
     }
     if (!_studyStopwatch.isRunning) _studyStopwatch.start();
@@ -241,9 +244,15 @@ final class StudySessionTimer {
     } else {
       _idleTimer?.cancel();
       _idleTimer = null;
-      if (!allowBackgroundPlayback) {
-        unawaited(_flushFromActivityChange());
+      if (allowBackgroundPlayback && _playbackActive) {
+        AppLogger.log(
+          _logScope,
+          'session.backgroundPlayback stage=${_stage.name}',
+        );
+        return;
       }
+      if (allowBackgroundPlayback) _studyActive = false;
+      unawaited(_flushFromActivityChange());
     }
   }
 
@@ -252,6 +261,8 @@ final class StudySessionTimer {
     AppLogger.log(
       _logScope,
       'session.background stage=${_stage.name} '
+      'playbackActive=$_playbackActive '
+      'allowBackgroundPlayback=$allowBackgroundPlayback '
       'elapsedMs=${_studyStopwatch.elapsedMilliseconds}',
     );
     try {
@@ -266,7 +277,10 @@ final class StudySessionTimer {
 
   void _scheduleIdleTimeout() {
     final timeout = idleTimeout;
-    if (timeout == null || _playbackActive || !_studyActive) {
+    if (timeout == null ||
+        !_canAccumulateStudyTime ||
+        _playbackActive ||
+        !_studyActive) {
       _idleTimer?.cancel();
       _idleTimer = null;
       return;
@@ -277,9 +291,7 @@ final class StudySessionTimer {
 
   void _onIdleTimeout() {
     _idleTimer = null;
-    if (!_started ||
-        _stopped ||
-        (!_activityGate.isForeground && !allowBackgroundPlayback)) {
+    if (!_started || _stopped || !_canAccumulateStudyTime) {
       return;
     }
     if (_playbackActive) {
@@ -291,4 +303,11 @@ final class StudySessionTimer {
     unawaited(_flushFromTimer());
     AppLogger.log(_logScope, 'session.idle stage=${_stage.name}');
   }
+
+  /// 当前生命周期是否允许累计总学习时长。
+  ///
+  /// 后台资格只由实际播放激活；暂停后的页面不能因为计时器仍存活而继续累计。
+  bool get _canAccumulateStudyTime =>
+      _activityGate.isForeground ||
+      (allowBackgroundPlayback && _playbackActive);
 }
