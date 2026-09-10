@@ -82,6 +82,16 @@ void main() {
           parentNavigatorKey: rootNavigatorKey,
           builder: (context, state) =>
               const Scaffold(body: Text('Free Player')),
+          onExit: (context, state) async {
+            await StudyTimeService(
+              database.dailyStudyRecordDao,
+              database.dailyStageStudyRecordDao,
+            ).recordActiveDuration(
+              const Duration(seconds: 2),
+              stage: StudyStage.freePlayer,
+            );
+            return true;
+          },
         ),
       ],
     );
@@ -92,7 +102,7 @@ void main() {
     await database.close();
   });
 
-  testWidgets('从根路由返回 Study 时刷新已落库的统计', (tester) async {
+  testWidgets('根路由退出收尾完成后返回 Study 时刷新统计', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -133,19 +143,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
     expect(find.text('0'), findsOneWidget);
 
-    await StudyTimeService(
-      database.dailyStudyRecordDao,
-      database.dailyStageStudyRecordDao,
-    ).recordActiveDuration(
-      const Duration(seconds: 2),
-      stage: StudyStage.intensiveListen,
-    );
-
-    router.push('/free-player');
-    await tester.pump();
+    final playerRoute = router.push<void>('/free-player');
+    await tester.pumpAndSettle();
     router.pop();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    await playerRoute;
+    await tester.pumpAndSettle();
 
     expect(find.text('2'), findsOneWidget);
   });

@@ -104,7 +104,7 @@ class _MainShellState extends ConsumerState<MainShell> with RouteAware {
     );
     setState(() => _rootRouteVisible = true);
     if (widget.navigationShell.currentIndex == 1) {
-      _refreshStudyData();
+      unawaited(_refreshStudyData(source: 'root-route-resume'));
     }
   }
 
@@ -476,7 +476,7 @@ class _MainShellState extends ConsumerState<MainShell> with RouteAware {
 
     // 切换到学习 tab 时刷新数据
     if (index == 1) {
-      _refreshStudyData();
+      unawaited(_refreshStudyData(source: 'study-tab-select'));
     }
     // StatefulShell 保留收藏页实例；重新进入时强制刷新两个待复习入口。
     if (index == 2) {
@@ -484,18 +484,28 @@ class _MainShellState extends ConsumerState<MainShell> with RouteAware {
     }
   }
 
-  /// 刷新学习页数据，确保时间相关计算和统计使用最新值
-  void _refreshStudyData() {
+  /// 刷新学习页数据，确保时间相关计算和统计使用最新值。
+  Future<void> _refreshStudyData({required String source}) async {
+    AppLogger.log('StudyRefresh', 'start source=$source');
     ref.invalidate(studyTaskProvider);
     ref.invalidate(completedAudioProvider);
     ref.invalidate(studyDurationRecordsProvider);
-    ref.read(studyStatsNotifierProvider.notifier).refresh();
+    try {
+      await ref.read(studyStatsNotifierProvider.notifier).refresh();
+      AppLogger.log('StudyRefresh', 'complete source=$source');
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyRefresh',
+        'failed source=$source error=$error\n$stackTrace',
+      );
+      rethrow;
+    }
   }
 
   /// App 回到前台回调：刷新学习数据 + 后台检查版本更新 + 同步通知权限
   void _onAppResume() {
     AppLogger.log('AppUpdate', 'onAppResume: trigger checkInBackground');
-    _refreshStudyData();
+    unawaited(_refreshStudyData(source: 'app-resume'));
     if (ref.read(thirdPartyStartupProvider).hasValue) {
       unawaited(ref.read(appUpdateProvider.notifier).checkInBackground());
     } else {

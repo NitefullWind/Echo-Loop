@@ -7,7 +7,7 @@ import 'app_logger.dart';
 import 'study_activity_gate.dart';
 import 'study_time_service.dart';
 
-/// 统计一个固定阶段的前台有效学习会话，并以增量方式定期落库。
+/// 统计一个固定阶段的有效学习会话，并以增量方式定期落库。
 ///
 /// 会话的生命周期由学习页面控制，而不是由播放器控制。播放暂停或结束
 /// 只会停止输入时长；只要页面仍有用户活动，总学习时长仍会继续累计。
@@ -19,6 +19,7 @@ final class StudySessionTimer {
     required StudyTimeService studyTimeService,
     required StudyStage stage,
     required StudyActivityGate activityGate,
+    this.allowBackgroundPlayback = false,
     this.checkpointInterval = const Duration(seconds: 30),
     this.idleTimeout,
     String? logScope,
@@ -45,6 +46,9 @@ final class StudySessionTimer {
   final StudyTimeService _studyTimeService;
   final StudyStage _stage;
   final StudyActivityGate _activityGate;
+
+  /// 由具体学习任务声明是否允许后台继续累计播放统计。
+  final bool allowBackgroundPlayback;
   final Duration checkpointInterval;
   final Duration? idleTimeout;
   final Stopwatch _studyStopwatch;
@@ -64,10 +68,10 @@ final class StudySessionTimer {
   /// 当前是否有音频/视频实际处于播放状态。
   bool _playbackActive = false;
 
-  /// 当前会话累计的前台有效时长。
+  /// 当前会话累计的有效学习时长。
   Duration get elapsed => _studyStopwatch.elapsed;
 
-  /// 当前会话累计的前台输入（播放）时长。
+  /// 当前会话累计的输入（播放）时长。
   Duration get inputElapsed => _inputStopwatch.elapsed;
 
   /// 当前是否正在累计总学习时长。
@@ -78,18 +82,22 @@ final class StudySessionTimer {
     if (_stopped || _started) return;
     _started = true;
     _studyActive = true;
-    if (_activityGate.isForeground) {
-      _startForegroundTiming();
+    if (_activityGate.isForeground || allowBackgroundPlayback) {
+      _startTiming();
     }
     AppLogger.log(_logScope, 'session.start stage=${_stage.name}');
   }
 
   /// 标记一次用户活动，并在 idle 后自动恢复总学习时长。
   void markActivity() {
-    if (!_started || _stopped || !_activityGate.isForeground) return;
+    if (!_started ||
+        _stopped ||
+        (!_activityGate.isForeground && !allowBackgroundPlayback)) {
+      return;
+    }
     final resumesFromIdle = !_studyActive;
     _studyActive = true;
-    _startForegroundTiming();
+    _startTiming();
     _scheduleIdleTimeout();
     if (resumesFromIdle) {
       AppLogger.log(
@@ -106,10 +114,10 @@ final class StudySessionTimer {
   void setPlaybackActive(bool active) {
     if (!_started || _stopped) return;
     _playbackActive = active;
-    if (!_activityGate.isForeground) return;
+    if (!_activityGate.isForeground && !allowBackgroundPlayback) return;
     if (active) {
       _studyActive = true;
-      _startForegroundTiming();
+      _startTiming();
       _scheduleIdleTimeout();
       return;
     }
@@ -170,7 +178,7 @@ final class StudySessionTimer {
     _stopped = true;
     _studyActive = false;
     _playbackActive = false;
-    _stopForegroundTiming();
+    _stopTiming();
     await flush();
     AppLogger.log(
       _logScope,
@@ -194,8 +202,9 @@ final class StudySessionTimer {
     }
   }
 
-  void _startForegroundTiming() {
-    if (!_activityGate.isForeground || (!_studyActive && !_playbackActive)) {
+  void _startTiming() {
+    if ((!_activityGate.isForeground && !allowBackgroundPlayback) ||
+        (!_studyActive && !_playbackActive)) {
       return;
     }
     if (!_studyStopwatch.isRunning) _studyStopwatch.start();
@@ -217,7 +226,7 @@ final class StudySessionTimer {
     }
   }
 
-  void _stopForegroundTiming() {
+  void _stopTiming() {
     _studyStopwatch.stop();
     _inputStopwatch.stop();
     _checkpointTimer?.cancel();
@@ -227,17 +236,19 @@ final class StudySessionTimer {
   void _onActivityChanged(bool isForeground) {
     if (!_started || _stopped) return;
     if (isForeground) {
-      if (_studyActive || _playbackActive) _startForegroundTiming();
+      if (_studyActive || _playbackActive) _startTiming();
       AppLogger.log(_logScope, 'session.resume stage=${_stage.name}');
     } else {
       _idleTimer?.cancel();
       _idleTimer = null;
-      unawaited(_flushFromActivityChange());
+      if (!allowBackgroundPlayback) {
+        unawaited(_flushFromActivityChange());
+      }
     }
   }
 
   Future<void> _flushFromActivityChange() async {
-    _stopForegroundTiming();
+    _stopTiming();
     AppLogger.log(
       _logScope,
       'session.background stage=${_stage.name} '
@@ -266,13 +277,17 @@ final class StudySessionTimer {
 
   void _onIdleTimeout() {
     _idleTimer = null;
-    if (!_started || _stopped || !_activityGate.isForeground) return;
+    if (!_started ||
+        _stopped ||
+        (!_activityGate.isForeground && !allowBackgroundPlayback)) {
+      return;
+    }
     if (_playbackActive) {
       _scheduleIdleTimeout();
       return;
     }
     _studyActive = false;
-    _stopForegroundTiming();
+    _stopTiming();
     unawaited(_flushFromTimer());
     AppLogger.log(_logScope, 'session.idle stage=${_stage.name}');
   }

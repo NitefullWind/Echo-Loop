@@ -216,7 +216,6 @@ final studyTimeServiceProvider = Provider<StudyTimeService>((ref) {
     ref.watch(dailyStudyRecordDaoProvider),
     ref.watch(dailyStageStudyRecordDaoProvider),
     statisticsDao: ref.watch(studyStatisticsDaoProvider),
-    activityGate: ref.watch(studyActivityGateProvider),
   );
 });
 
@@ -225,7 +224,7 @@ final studyStatisticsDaoProvider = Provider<StudyStatisticsDao>((ref) {
   return ref.watch(appDatabaseProvider).studyStatisticsDao;
 });
 
-/// 学习统计前台资格门控 Provider。
+/// 学习计时器使用的 App 生命周期状态 Provider。
 final studyActivityGateProvider = Provider<StudyActivityGate>((ref) {
   final gate = StudyActivityGate();
   ref.onDispose(gate.dispose);

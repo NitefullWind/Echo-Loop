@@ -6,13 +6,13 @@ import '../database/daos/study_statistics_dao.dart';
 import '../models/study_stage.dart';
 import '../utils/word_counter.dart';
 import 'app_logger.dart';
-import 'study_activity_gate.dart';
 
 /// 学习统计事件服务。
 ///
-/// 所有写入都先在调用点快照日期、阶段和前台资格，再进入同一个 FIFO
-/// 队列。查询会等待提交前的队列尾部，因此读操作具备 read-after-write
-/// 一致性；具体数据库事务由 [StudyStatisticsDao] 负责。
+/// 所有写入都先在调用点快照日期和阶段，再进入同一个 FIFO 队列。
+/// 查询会等待提交前的队列尾部，因此读操作具备 read-after-write 一致性；
+/// 具体数据库事务由 [StudyStatisticsDao] 负责。是否支持后台由具体学习任务
+/// 决定，统计写入本身不根据 App 生命周期丢弃事件。
 class StudyTimeService {
   final DailyStudyRecordDao _dao;
   final DailyStageStudyRecordDao _stageDao;
@@ -27,8 +27,7 @@ class StudyTimeService {
     this._dao,
     this._stageDao, {
     StudyStatisticsDao? statisticsDao,
-    StudyActivityGate? activityGate,
-  }) : _activityGate = activityGate {
+  }) {
     _statisticsDao = statisticsDao ?? StudyStatisticsDao(_dao.attachedDatabase);
   }
 
@@ -53,7 +52,7 @@ class StudyTimeService {
     );
   }
 
-  /// 记录前台有效学习时长；计时器已经完成前台过滤，本方法不会再次 gate。
+  /// 记录有效学习时长；是否允许后台计时由具体学习任务和计时器决定。
   Future<void> recordActiveDuration(
     Duration duration, {
     required StudyStage stage,
@@ -161,7 +160,6 @@ class StudyTimeService {
     bool recordInputDuration = true,
     DateTime? date,
   }) {
-    if (!_isForeground('sentence_playback')) return Future<void>.value();
     final eventDate = date ?? DateTime.now();
     final milliseconds = duration.inMilliseconds;
     final wordForms = _extractWordForms(text, eventDate);
@@ -183,7 +181,6 @@ class StudyTimeService {
     required StudyStage stage,
     DateTime? date,
   }) {
-    if (!_isForeground('speech_recognition')) return Future<void>.value();
     final eventDate = date ?? DateTime.now();
     return _enqueue(
       StudyStatisticsDelta(
@@ -201,7 +198,6 @@ class StudyTimeService {
     required StudyStage stage,
     DateTime? date,
   }) {
-    if (!_isForeground('output_words')) return Future<void>.value();
     final eventDate = date ?? DateTime.now();
     return _enqueue(
       StudyStatisticsDelta(date: eventDate, stage: stage, outputWords: count),
@@ -347,18 +343,6 @@ class StudyTimeService {
     await _queueTail;
     return query();
   }
-
-  bool _isForeground(String eventName) {
-    final gate = _activityGate;
-    if (gate == null || gate.isForeground) return true;
-    AppLogger.log(
-      'StudyStatistics',
-      'write.skipped reason=app_not_foreground event=$eventName',
-    );
-    return false;
-  }
-
-  final StudyActivityGate? _activityGate;
 
   Map<String, DateTime> _extractWordForms(String text, DateTime learnedAt) {
     final forms = <String, DateTime>{};

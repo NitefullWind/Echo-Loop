@@ -179,6 +179,8 @@ class _FlowAudioEngine extends TestAudioEngine {
 
 /// 复用真实 ListeningPractice 逻辑，只开放测试 seed 入口并屏蔽真实持久化。
 class _FlowListeningPractice extends ListeningPractice {
+  int saveCurrentPlaybackStateCount = 0;
+
   void seed({
     required List<Sentence> sentences,
     required PlaybackSettings settings,
@@ -206,7 +208,28 @@ class _FlowListeningPractice extends ListeningPractice {
   }
 
   @override
-  Future<void> saveCurrentPlaybackState({bool silent = false}) async {}
+  Future<void> saveCurrentPlaybackState({bool silent = false}) async {
+    saveCurrentPlaybackStateCount += 1;
+  }
+}
+
+class _FailOnceStudyTimeService extends FakeStudyTimeService {
+  bool failNextSessionDuration = false;
+  int sessionDurationCalls = 0;
+
+  @override
+  Future<void> recordSessionDurations({
+    required Duration studyDuration,
+    Duration inputDuration = Duration.zero,
+    required StudyStage stage,
+    DateTime? date,
+  }) async {
+    sessionDurationCalls += 1;
+    if (failNextSessionDuration) {
+      failNextSessionDuration = false;
+      throw StateError('simulated final statistics flush failure');
+    }
+  }
 }
 
 void main() {
@@ -249,6 +272,7 @@ void main() {
   late _FlowAudioEngine engine;
   late _FlowListeningPractice lp;
   late StudyActivityGate activityGate;
+  late _FailOnceStudyTimeService studyTimeService;
   AppDatabase? statisticsDatabase;
   StudyTimeService? statisticsService;
   int? studyPageGeneration;
@@ -313,7 +337,6 @@ void main() {
       database.dailyStudyRecordDao,
       database.dailyStageStudyRecordDao,
       statisticsDao: database.studyStatisticsDao,
-      activityGate: activityGate,
     );
     statisticsService = studyTimeService;
     container = ProviderContainer(
@@ -342,10 +365,11 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     engine = _FlowAudioEngine();
     activityGate = StudyActivityGate();
+    studyTimeService = _FailOnceStudyTimeService();
     container = ProviderContainer(
       overrides: [
         audioEngineProvider.overrideWith(() => engine),
-        studyTimeServiceProvider.overrideWithValue(FakeStudyTimeService()),
+        studyTimeServiceProvider.overrideWithValue(studyTimeService),
         studyActivityGateProvider.overrideWithValue(activityGate),
         listeningPracticeProvider.overrideWith(() => _FlowListeningPractice()),
       ],
@@ -354,6 +378,45 @@ void main() {
         container.read(listeningPracticeProvider.notifier)
             as _FlowListeningPractice;
     await Future<void>.delayed(Duration.zero);
+  });
+
+  test('finishStudyPage 等待未 checkpoint 的最终学习时长写入', () async {
+    await useRecordingStatisticsRecorder();
+    final generation = studyPageGeneration;
+    expect(generation, isNotNull);
+
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    await lp.finishStudyPage(generation: generation);
+    studyPageGeneration = null;
+
+    final record = await statisticsDatabase!.dailyStudyRecordDao.getByDate(
+      DateTime.now(),
+    );
+    expect(record?.studyTimeMilliseconds, greaterThanOrEqualTo(1000));
+  });
+
+  test('统计 flush 失败时音频退出仍暂停并完成断点保存', () async {
+    AppLogger.instance.clear();
+    lp.seed(sentences: sentences, settings: const PlaybackSettings());
+    studyPageGeneration = lp.beginStudyPage();
+    await start();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    studyTimeService.failNextSessionDuration = true;
+
+    await lp.finishStudyPage(generation: studyPageGeneration);
+    studyPageGeneration = null;
+
+    expect(engine.isPlaying, isFalse);
+    expect(lp.saveCurrentPlaybackStateCount, greaterThan(0));
+    expect(studyTimeService.sessionDurationCalls, 1);
+    expect(
+      AppLogger.instance.entries.any(
+        (entry) =>
+            entry.tag == 'StudyExit' &&
+            entry.message.contains('timer flush failed'),
+      ),
+      isTrue,
+    );
   });
 
   tearDown(() async {

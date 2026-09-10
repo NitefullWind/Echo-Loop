@@ -5,7 +5,6 @@ import 'package:flutter/widgets.dart';
 import 'package:echo_loop/database/app_database.dart';
 import 'package:echo_loop/models/study_stage.dart';
 import 'package:echo_loop/services/study_time_service.dart';
-import 'package:echo_loop/services/study_activity_gate.dart';
 
 void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
@@ -13,6 +12,7 @@ void main() {
   late StudyTimeService service;
 
   setUp(() {
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     db = AppDatabase(NativeDatabase.memory());
     service = StudyTimeService(
       db.dailyStudyRecordDao,
@@ -21,7 +21,10 @@ void main() {
     );
   });
 
-  tearDown(() async => db.close());
+  tearDown(() async {
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await db.close();
+  });
 
   Future<void> study(int seconds, {DateTime? date}) =>
       service.recordActiveDuration(
@@ -137,37 +140,38 @@ void main() {
     expect(await db.dailyStudyRecordDao.getAll(), isEmpty);
   });
 
-  test('事件调用时快照前台资格，主动时长不重复 gate', () async {
-    final gate = StudyActivityGate();
-    addTearDown(gate.dispose);
-    final gatedService = StudyTimeService(
-      db.dailyStudyRecordDao,
-      db.dailyStageStudyRecordDao,
-      activityGate: gate,
-    );
-    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    await gatedService.recordSentencePlayback(
-      duration: const Duration(seconds: 1),
-      text: 'background skipped',
-      stage: StudyStage.freePlayer,
-      date: DateTime(2026, 9, 8),
-    );
+  test('统计写入不依赖 App 前后台状态', () async {
     binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-    await gatedService.recordSentencePlayback(
+
+    await service.recordSentencePlayback(
       duration: const Duration(seconds: 1),
-      text: 'not recorded',
+      text: 'background sentence',
       stage: StudyStage.freePlayer,
       date: DateTime(2026, 9, 8),
     );
-    await gatedService.recordActiveDuration(
+    await service.recordSpeechRecognition(
+      duration: const Duration(seconds: 1),
+      producedWordCount: 3,
+      stage: StudyStage.retell,
+      date: DateTime(2026, 9, 8),
+    );
+    await service.recordOutputWords(
+      4,
+      stage: StudyStage.retell,
+      date: DateTime(2026, 9, 8),
+    );
+    await service.recordActiveDuration(
       const Duration(milliseconds: 250),
       stage: StudyStage.freePlayer,
       date: DateTime(2026, 9, 8),
     );
-    await gatedService.flush();
+    await service.flush();
     final record = await db.dailyStudyRecordDao.getByDate(DateTime(2026, 9, 8));
     expect(record?.inputWords, 2);
+    expect(record?.inputTimeMilliseconds, 1000);
+    expect(record?.outputTimeMilliseconds, 1000);
+    expect(record?.outputWords, 7);
     expect(record?.studyTimeMilliseconds, 250);
   });
 

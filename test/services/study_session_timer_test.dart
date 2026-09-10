@@ -16,6 +16,7 @@ class _RecordingStudyTimeService extends StudyTimeService {
 
   final List<Duration> recordedStudy = <Duration>[];
   final List<Duration> recordedInput = <Duration>[];
+  bool failNextRecord = false;
 
   @override
   Future<void> recordSessionDurations({
@@ -26,6 +27,10 @@ class _RecordingStudyTimeService extends StudyTimeService {
   }) async {
     recordedStudy.add(studyDuration);
     recordedInput.add(inputDuration);
+    if (failNextRecord) {
+      failNextRecord = false;
+      throw StateError('simulated statistics write failure');
+    }
   }
 }
 
@@ -145,6 +150,56 @@ void main() {
 
     await timer.stop();
     await timer.dispose();
+  });
+
+  test('允许后台播放的任务在后台继续累计学习和输入时长', () {
+    fakeAsync((async) {
+      withClock(async.getClock(DateTime(2026, 9, 8)), () {
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        final service = _RecordingStudyTimeService(db);
+        final timer = StudySessionTimer(
+          studyTimeService: service,
+          stage: StudyStage.freePlayer,
+          activityGate: activityGate,
+          allowBackgroundPlayback: true,
+        );
+
+        timer.start();
+        timer.setPlaybackActive(true);
+        async.elapse(const Duration(seconds: 3));
+        async.flushMicrotasks();
+        final stop = timer.stop();
+        async.flushMicrotasks();
+
+        expect(timer.elapsed, const Duration(seconds: 3));
+        expect(timer.inputElapsed, const Duration(seconds: 3));
+        expect(
+          service.recordedStudy.fold<int>(
+            0,
+            (sum, duration) => sum + duration.inMilliseconds,
+          ),
+          3000,
+        );
+        expect(
+          service.recordedInput.fold<int>(
+            0,
+            (sum, duration) => sum + duration.inMilliseconds,
+          ),
+          3000,
+        );
+        async.flushMicrotasks();
+        final dispose = timer.dispose();
+        async.flushMicrotasks();
+        var stopCompleted = false;
+        var disposeCompleted = false;
+        stop.then((_) => stopCompleted = true);
+        dispose.then((_) => disposeCompleted = true);
+        async.flushMicrotasks();
+        expect(stopCompleted, isTrue);
+        expect(disposeCompleted, isTrue);
+      });
+    });
   });
 
   test('播放暂停后仍可统计用户思考时间，但不增加输入时长', () async {
@@ -267,5 +322,32 @@ void main() {
         expect(disposeCompleted, isTrue);
       });
     });
+  });
+
+  test('最终 flush 失败时保留未持久化增量并记录日志', () async {
+    AppLogger.instance.clear();
+    final service = _RecordingStudyTimeService(db)..failNextRecord = true;
+    final timer = StudySessionTimer(
+      studyTimeService: service,
+      stage: StudyStage.freePlayer,
+      activityGate: activityGate,
+    );
+
+    timer.start();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    await expectLater(timer.dispose(), throwsStateError);
+    expect(
+      AppLogger.instance.entries.any(
+        (entry) =>
+            entry.tag == 'StudySessionTimer' &&
+            entry.message.contains('session.flush.failed'),
+      ),
+      isTrue,
+    );
+
+    await timer.dispose();
+    expect(service.recordedStudy, hasLength(2));
+    expect(service.recordedStudy[1], service.recordedStudy[0]);
   });
 }

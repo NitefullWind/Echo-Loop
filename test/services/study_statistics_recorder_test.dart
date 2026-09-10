@@ -4,7 +4,6 @@ import 'package:flutter/widgets.dart';
 import 'package:echo_loop/database/app_database.dart';
 import 'package:echo_loop/services/study_statistics_recorder.dart';
 import 'package:echo_loop/services/study_time_service.dart';
-import 'package:echo_loop/services/study_activity_gate.dart';
 import 'package:echo_loop/services/learned_vocabulary_tracker.dart';
 import 'package:echo_loop/models/study_stage.dart';
 
@@ -12,14 +11,12 @@ void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
   late AppDatabase db;
   late StudyStatisticsRecorder recorder;
-  late StudyActivityGate activityGate;
   late LearnedVocabularyTracker vocabularyTracker;
   var vocabularyPersisted = false;
 
   setUp(() {
     binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     db = AppDatabase(NativeDatabase.memory());
-    activityGate = StudyActivityGate();
     vocabularyPersisted = false;
     vocabularyTracker = LearnedVocabularyTracker(
       persistWordForms: (wordForms) async {
@@ -33,14 +30,12 @@ void main() {
         db.dailyStudyRecordDao,
         db.dailyStageStudyRecordDao,
       ),
-      activityGate: activityGate,
       vocabularyTracker: vocabularyTracker,
     );
   });
 
   tearDown(() async {
     await vocabularyTracker.dispose();
-    activityGate.dispose();
     binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await db.close();
   });
@@ -93,7 +88,7 @@ void main() {
     expect(record?.inputWords, 2);
   });
 
-  test('后台完成按句播放时不写入时长、词数或词汇', () async {
+  test('后台完成按句播放时仍写入时长、词数和词汇', () async {
     binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
 
@@ -105,12 +100,13 @@ void main() {
     );
 
     final record = await db.dailyStudyRecordDao.getByDate(DateTime.now());
-    expect(record, isNull);
+    expect(record?.inputTimeMilliseconds, 2000);
+    expect(record?.inputWords, 2);
     await vocabularyTracker.flush();
-    expect(vocabularyPersisted, isFalse);
+    expect(vocabularyPersisted, isTrue);
   });
 
-  test('后台录音识别和主动学习时长均不写入统计', () async {
+  test('后台录音识别和主动学习时长仍写入统计', () async {
     binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
 
@@ -125,6 +121,8 @@ void main() {
     );
 
     final record = await db.dailyStudyRecordDao.getByDate(DateTime.now());
-    expect(record, isNull);
+    expect(record?.outputTimeMilliseconds, 2000);
+    expect(record?.outputWords, 3);
+    expect(record?.studyTimeMilliseconds, 2000);
   });
 }

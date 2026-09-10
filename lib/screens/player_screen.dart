@@ -77,13 +77,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   @override
   void dispose() {
-    scheduleMicrotask(() async {
-      // 随心听页面退出后 controller 仍由 keep-alive provider 持有，必须先暂停
-      // 共享音频引擎，避免页面销毁后音频继续播放。
-      await _notifier.pause();
-      await _notifier.endStudyPage(_studyPageGeneration);
-      await _notifier.saveCurrentPlaybackState();
-    });
+    // 正常退出由 GoRoute.onExit 等待；这里保留同一收尾入口作为兜底，
+    // 防止路由被外部直接移除时共享音频引擎继续播放或丢失最终统计。
+    scheduleMicrotask(
+      () => unawaited(
+        _notifier.finishStudyPage(generation: _studyPageGeneration),
+      ),
+    );
     _tabController.dispose();
     super.dispose();
   }

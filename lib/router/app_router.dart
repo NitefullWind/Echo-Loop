@@ -49,6 +49,8 @@ import '../screens/backup_restore_screen.dart';
 import '../screens/favorite_vocabulary_review_screen.dart';
 import '../screens/activity_calendar_screen.dart';
 import '../screens/review_statistics_screen.dart';
+import '../providers/listening_practice/listening_practice_provider.dart';
+import '../providers/media_playback/media_playback_provider.dart';
 import 'main_shell.dart';
 
 /// 全局根导航器 key
@@ -230,11 +232,36 @@ GoRoute _sentenceDetailRoute() => GoRoute(
   },
 );
 
-/// 媒体随心听页路由工厂。合集内变体挂在 `/collections/:collectionId` 之下
+/// 路由退出钩子等待控制器完成页面级收尾，确保 MainShell 恢复时读到最新统计。
+Future<bool> _finishAudioPlayerRoute(Ref ref) async {
+  AppLogger.log('StudyExit', 'audio route onExit start');
+  await ref.read(listeningPracticeProvider.notifier).finishStudyPage();
+  AppLogger.log('StudyExit', 'audio route onExit complete');
+  return true;
+}
+
+/// 媒体播放器路由退出钩子，等待控制器完成页面级收尾。
+Future<bool> _finishMediaPlayerRoute(Ref ref) async {
+  AppLogger.log('StudyExit', 'media route onExit start');
+  await ref.read(mediaPlaybackProvider.notifier).finishStudyPage();
+  AppLogger.log('StudyExit', 'media route onExit complete');
+  return true;
+}
+
+/// 音频随心听播放器路由工厂。合集内变体挂在 `/collections/:collectionId` 之下
 /// （[path] 传相对段），独立音频变体挂在顶层（[path] 传绝对路径）。
 ///
 /// 同 §7.17：嵌套让 URL 自表达完整栈；extra 重解析丢失时首帧退回入口页。
-GoRoute _mediaPlayerRoute(String path) => GoRoute(
+GoRoute _audioPlayerRoute(String path, Ref ref) => GoRoute(
+  path: path,
+  parentNavigatorKey: rootNavigatorKey,
+  builder: (context, state) => const PlayerScreen(),
+  onExit: (_, __) => _finishAudioPlayerRoute(ref),
+  routes: [_sentenceDetailRoute()],
+);
+
+/// 媒体随心听播放器路由工厂，路径形式与 [_audioPlayerRoute] 相同。
+GoRoute _mediaPlayerRoute(String path, Ref ref) => GoRoute(
   path: path,
   parentNavigatorKey: rootNavigatorKey,
   builder: (context, state) {
@@ -242,6 +269,7 @@ GoRoute _mediaPlayerRoute(String path) => GoRoute(
     if (item is! AudioItem) return const _RestoredRoutePopper();
     return MediaPlaybackScreen(audioItem: item);
   },
+  onExit: (_, __) => _finishMediaPlayerRoute(ref),
   routes: [_sentenceDetailRoute()],
 );
 
@@ -336,14 +364,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                         },
                         routes: [_pdfPreviewRoute()],
                       ),
-                      GoRoute(
-                        path: ':audioId/player',
-                        parentNavigatorKey: rootNavigatorKey,
-                        builder: (context, state) => const PlayerScreen(),
-                        routes: [_sentenceDetailRoute()],
-                      ),
+                      _audioPlayerRoute(':audioId/player', ref),
                       _mediaPlayerRoute(
                         ':audioId/${AppRoutes.mediaPlayerSegment}',
+                        ref,
                       ),
                       GoRoute(
                         path: ':audioId/blind-listen',
@@ -593,13 +617,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         },
         routes: [_pdfPreviewRoute()],
       ),
-      GoRoute(
-        path: '/audio/:audioId/player',
-        parentNavigatorKey: rootNavigatorKey,
-        builder: (context, state) => const PlayerScreen(),
-        routes: [_sentenceDetailRoute()],
-      ),
-      _mediaPlayerRoute('/audio/:audioId/${AppRoutes.mediaPlayerSegment}'),
+      _audioPlayerRoute('/audio/:audioId/player', ref),
+      _mediaPlayerRoute('/audio/:audioId/${AppRoutes.mediaPlayerSegment}', ref),
       GoRoute(
         path: '/audio/:audioId/subtitles/edit',
         parentNavigatorKey: rootNavigatorKey,

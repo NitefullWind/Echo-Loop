@@ -134,6 +134,8 @@ class ListeningPractice extends _$ListeningPractice {
   StudySessionTimer? _studySessionTimer;
   int _studyPageGeneration = 0;
   int? _activeStudyPageGeneration;
+  Future<void>? _finishStudyPageInFlight;
+  int? _finishStudyPageInFlightGeneration;
 
   @override
   ListeningPracticeState build() {
@@ -162,6 +164,7 @@ class ListeningPractice extends _$ListeningPractice {
         studyTimeService: ref.read(studyTimeServiceProvider),
         stage: StudyStage.freePlayer,
         activityGate: ref.read(studyActivityGateProvider),
+        allowBackgroundPlayback: true,
         idleTimeout: const Duration(minutes: 2),
         logScope: 'FreePlayerAudioTimer',
       );
@@ -187,10 +190,91 @@ class ListeningPractice extends _$ListeningPractice {
   /// 结束指定页面会话；过期页面的异步清理不会关闭新页面会话。
   Future<void> endStudyPage(int generation) async {
     if (_activeStudyPageGeneration != generation) return;
-    _activeStudyPageGeneration = null;
     final timer = _studySessionTimer;
-    _studySessionTimer = null;
-    if (timer != null) await timer.dispose();
+    try {
+      if (timer != null) await timer.dispose();
+    } catch (error, stackTrace) {
+      // 统计属于退出时的非关键副作用；播放器必须继续完成页面收尾。
+      // StudySessionTimer 已经在 dispose 的 finally 中释放自身监听和计时器，
+      // 因此这里记录失败后仍可安全清空 Provider 持有的页面状态。
+      AppLogger.log(
+        'StudyExit',
+        'audio timer flush failed generation=$generation error=$error\n$stackTrace',
+      );
+    } finally {
+      if (_activeStudyPageGeneration == generation &&
+          identical(_studySessionTimer, timer)) {
+        _activeStudyPageGeneration = null;
+        _studySessionTimer = null;
+      }
+    }
+  }
+
+  /// 完成当前随心听页面的退出收尾。
+  ///
+  /// 正常路由退出和页面销毁兜底都调用此入口，确保暂停播放、最终 flush
+  /// 与断点保存只编排一次。传入页面代际时，过期页面不会影响新页面会话。
+  Future<void> finishStudyPage({int? generation}) {
+    final activeGeneration = _activeStudyPageGeneration;
+    if (activeGeneration == null ||
+        (generation != null && generation != activeGeneration)) {
+      if (generation != null && activeGeneration != generation) {
+        AppLogger.log(
+          'StudyExit',
+          'audio finish skipped reason=stale-generation '
+              'requestedGeneration=$generation activeGeneration=$activeGeneration',
+        );
+      }
+      return Future<void>.value();
+    }
+
+    final inFlight = _finishStudyPageInFlight;
+    if (inFlight != null &&
+        _finishStudyPageInFlightGeneration == activeGeneration) {
+      AppLogger.log(
+        'StudyExit',
+        'audio finish joined generation=$activeGeneration',
+      );
+      return inFlight;
+    }
+
+    final targetGeneration = activeGeneration;
+    AppLogger.log(
+      'StudyExit',
+      'audio finish start generation=$targetGeneration',
+    );
+    final operation = _finishStudyPage(targetGeneration);
+    late final Future<void> scheduled;
+    scheduled = operation.whenComplete(() {
+      if (identical(_finishStudyPageInFlight, scheduled)) {
+        _finishStudyPageInFlight = null;
+        _finishStudyPageInFlightGeneration = null;
+      }
+    });
+    _finishStudyPageInFlight = scheduled;
+    _finishStudyPageInFlightGeneration = targetGeneration;
+    return scheduled;
+  }
+
+  /// 按页面代际执行暂停、最终计时 flush 和断点保存。
+  Future<void> _finishStudyPage(int generation) async {
+    if (_activeStudyPageGeneration != generation) return;
+    try {
+      await pause();
+      if (_activeStudyPageGeneration != generation) return;
+      await endStudyPage(generation);
+      await saveCurrentPlaybackState();
+      AppLogger.log(
+        'StudyExit',
+        'audio finish complete generation=$generation',
+      );
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'audio finish failed generation=$generation error=$error\n$stackTrace',
+      );
+      rethrow;
+    }
   }
 
   /// 缓存的 AudioEngine 引用，仅用于 [_disposeListeners] 中清空锁屏切句回调。
@@ -475,9 +559,7 @@ class ListeningPractice extends _$ListeningPractice {
       return;
     }
 
-    final gate = ref.read(studyActivityGateProvider);
     _lastGaplessStatsPosition = position;
-    if (!gate.isForeground) return;
 
     final completed = SentenceTracker.findSentencesCompletedBetween(
       state.sentences,

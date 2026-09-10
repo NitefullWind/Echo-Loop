@@ -16,7 +16,9 @@ import 'package:echo_loop/providers/audio_engine/audio_engine_provider.dart';
 import 'package:echo_loop/providers/learned_vocabulary_tracker_provider.dart';
 import 'package:echo_loop/providers/media_engine/media_engine_provider.dart';
 import 'package:echo_loop/providers/media_playback/media_playback_provider.dart';
+import 'package:echo_loop/services/app_logger.dart';
 import 'package:echo_loop/services/media_session_router.dart';
+import 'package:echo_loop/services/study_time_service.dart';
 import 'package:echo_loop/utils/app_data_dir.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -25,6 +27,38 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../helpers/mock_providers.dart';
 import '../../helpers/shared/fake_media_player_backend.dart';
+
+class _FailOnceStudyTimeService extends StudyTimeService {
+  _FailOnceStudyTimeService(AppDatabase database)
+    : super(
+        database.dailyStudyRecordDao,
+        database.dailyStageStudyRecordDao,
+        statisticsDao: database.studyStatisticsDao,
+      );
+
+  bool failNextSessionDuration = false;
+  int sessionDurationCalls = 0;
+
+  @override
+  Future<void> recordSessionDurations({
+    required Duration studyDuration,
+    Duration inputDuration = Duration.zero,
+    required StudyStage stage,
+    DateTime? date,
+  }) async {
+    sessionDurationCalls += 1;
+    if (failNextSessionDuration) {
+      failNextSessionDuration = false;
+      throw StateError('simulated final statistics flush failure');
+    }
+    await super.recordSessionDurations(
+      studyDuration: studyDuration,
+      inputDuration: inputDuration,
+      stage: stage,
+      date: date,
+    );
+  }
+}
 
 void main() {
   late Directory appDir;
@@ -36,6 +70,7 @@ void main() {
   late MediaSessionRouter router;
   late ProviderContainer container;
   late AppDatabase database;
+  late _FailOnceStudyTimeService studyTimeService;
 
   final sentences = <Sentence>[
     Sentence(
@@ -78,6 +113,7 @@ void main() {
     bookmarkDao = FakeBookmarkDao();
     playbackStateDao = _MockPlaybackStateDao();
     database = AppDatabase(NativeDatabase.memory());
+    studyTimeService = _FailOnceStudyTimeService(database);
     when(
       () => playbackStateDao.getByAudioId(any()),
     ).thenAnswer((_) async => null);
@@ -90,6 +126,7 @@ void main() {
         audioItemDaoProvider.overrideWithValue(audioItemDao),
         bookmarkDaoProvider.overrideWithValue(bookmarkDao),
         playbackStateDaoProvider.overrideWithValue(playbackStateDao),
+        studyTimeServiceProvider.overrideWithValue(studyTimeService),
         audioEngineProvider.overrideWith(
           () => _TranscriptAudioEngine(sentences),
         ),
@@ -140,6 +177,42 @@ void main() {
     }
     fail('Timed out waiting for the asynchronous study duration write.');
   }
+
+  test('finishStudyPage 等待未 checkpoint 的最终学习时长写入', () async {
+    final controller = await loadController();
+    final generation = controller.beginStudyPage();
+
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    await controller.finishStudyPage(generation: generation);
+
+    final record = await database.dailyStudyRecordDao.getByDate(DateTime.now());
+    expect(record?.studyTimeMilliseconds, greaterThanOrEqualTo(1000));
+  });
+
+  test('统计 flush 失败时媒体退出仍 detach backend', () async {
+    AppLogger.instance.clear();
+    final controller = await loadController();
+    final generation = controller.beginStudyPage();
+
+    unawaited(controller.play());
+    await waitUntil(() => backend.playCalls == 1);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    studyTimeService.failNextSessionDuration = true;
+
+    await controller.finishStudyPage(generation: generation);
+
+    expect(backend.playing, isFalse);
+    expect(backend.pauseCalls, greaterThan(0));
+    expect(studyTimeService.sessionDurationCalls, 1);
+    expect(
+      AppLogger.instance.entries.any(
+        (entry) =>
+            entry.tag == 'StudyExit' &&
+            entry.message.contains('timer flush failed'),
+      ),
+      isTrue,
+    );
+  });
 
   test('打开媒体前预读断点并作为 backend 初始位置', () async {
     when(() => playbackStateDao.getByAudioId('media-playback-test')).thenAnswer(

@@ -115,14 +115,9 @@ class _MediaPlaybackScreenState extends ConsumerState<MediaPlaybackScreen>
     unawaited(_fullscreenSubscription.cancel());
     unawaited(_releaseFullscreen());
     _playlistViewController.dispose();
-    // MediaPlayback 是 keep-alive provider，不能依赖 Provider dispose 感知页面退出。
-    // 页面作为媒体链路 owner，必须在销毁时立即把释放操作入队；如果延迟到
-    // microtask，ProviderScope 可能先触发 provider-level dispose，导致两条释放链
-    // 以错误顺序争用同一条媒体命令队列。加载中的 cancelLoad 与这里的
-    // releaseFromScreen 由 controller 去重，避免断点保存和媒体释放并发交错。
-    unawaited(
-      _controller.releaseFromScreen(studyPageGeneration: _studyPageGeneration),
-    );
+    // 正常退出由 GoRoute.onExit 等待；这里保留同一收尾入口作为兜底，
+    // 防止路由被外部直接移除时媒体资源继续工作或丢失最终统计。
+    unawaited(_controller.finishStudyPage(generation: _studyPageGeneration));
     scheduleMicrotask(_sleepTimer.cancel);
     super.dispose();
   }

@@ -59,6 +59,8 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
   StudySessionTimer? _studySessionTimer;
   int _studyPageGeneration = 0;
   int? _activeStudyPageGeneration;
+  Future<void>? _finishStudyPageInFlight;
+  int? _finishStudyPageInFlightGeneration;
 
   MediaEngine get _engine {
     final cached = _engineCache;
@@ -77,6 +79,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
         studyTimeService: ref.read(studyTimeServiceProvider),
         stage: StudyStage.freePlayer,
         activityGate: ref.read(studyActivityGateProvider),
+        allowBackgroundPlayback: true,
         idleTimeout: const Duration(minutes: 2),
         logScope: 'FreePlayerMediaTimer',
       );
@@ -106,11 +109,88 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
     return true;
   }
 
+  /// 完成当前媒体随心听页面的退出收尾。
+  ///
+  /// 正常路由退出和页面销毁兜底都调用此入口，复用媒体释放流程并等待
+  /// 页面计时器的最终 flush。传入页面代际时，过期页面不会释放新会话。
+  Future<void> finishStudyPage({int? generation}) {
+    final activeGeneration = _activeStudyPageGeneration;
+    if (activeGeneration == null ||
+        (generation != null && generation != activeGeneration)) {
+      if (generation != null && activeGeneration != generation) {
+        AppLogger.log(
+          'StudyExit',
+          'media finish skipped reason=stale-generation '
+              'requestedGeneration=$generation activeGeneration=$activeGeneration',
+        );
+      }
+      return Future<void>.value();
+    }
+
+    final inFlight = _finishStudyPageInFlight;
+    if (inFlight != null &&
+        _finishStudyPageInFlightGeneration == activeGeneration) {
+      AppLogger.log(
+        'StudyExit',
+        'media finish joined generation=$activeGeneration',
+      );
+      return inFlight;
+    }
+
+    final targetGeneration = activeGeneration;
+    AppLogger.log(
+      'StudyExit',
+      'media finish start generation=$targetGeneration',
+    );
+    final operation = _finishStudyPage(targetGeneration);
+    late final Future<void> scheduled;
+    scheduled = operation.whenComplete(() {
+      if (identical(_finishStudyPageInFlight, scheduled)) {
+        _finishStudyPageInFlight = null;
+        _finishStudyPageInFlightGeneration = null;
+      }
+    });
+    _finishStudyPageInFlight = scheduled;
+    _finishStudyPageInFlightGeneration = targetGeneration;
+    return scheduled;
+  }
+
+  /// 按页面代际执行计时 flush、媒体解绑和断点保存。
+  Future<void> _finishStudyPage(int generation) async {
+    if (_activeStudyPageGeneration != generation) return;
+    try {
+      await releaseFromScreen(studyPageGeneration: generation);
+      AppLogger.log(
+        'StudyExit',
+        'media finish complete generation=$generation',
+      );
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'media finish failed generation=$generation error=$error\n$stackTrace',
+      );
+      rethrow;
+    }
+  }
+
   Future<void> _endActiveStudyPage() async {
-    _activeStudyPageGeneration = null;
+    final generation = _activeStudyPageGeneration;
     final timer = _studySessionTimer;
-    _studySessionTimer = null;
-    if (timer != null) await timer.dispose();
+    try {
+      if (timer != null) await timer.dispose();
+    } catch (error, stackTrace) {
+      // 统计失败不能阻止媒体页面释放；媒体资源的清理由下方退出流程继续完成。
+      AppLogger.log(
+        'StudyExit',
+        'media timer flush failed generation=$generation error=$error\n$stackTrace',
+      );
+    } finally {
+      if (_activeStudyPageGeneration == generation &&
+          identical(_studySessionTimer, timer)) {
+        _activeStudyPageGeneration = null;
+        _studySessionTimer = null;
+      }
+    }
   }
 
   void _setPlaying(bool playing) {
@@ -141,9 +221,7 @@ class MediaPlayback extends Notifier<MediaPlaybackState> {
       return;
     }
 
-    final gate = ref.read(studyActivityGateProvider);
     _lastGaplessStatsPosition = position;
-    if (!gate.isForeground) return;
 
     final completed = SentenceTracker.findSentencesCompletedBetween(
       state.sentences,
