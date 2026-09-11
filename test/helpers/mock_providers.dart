@@ -120,7 +120,6 @@ class TestForegroundAudioEngine extends FakeForegroundAudioEngine {
   });
 }
 
-
 class TestDailyStudyTime extends FakeDailyStudyTime {}
 
 class TestOfflineAsrSettings extends FakeOfflineAsrSettings {
@@ -458,6 +457,11 @@ class TestSpeechRecordingController extends SpeechRecordingController {
 
   @override
   void setRecorder(StudyEventRecorder? recorder) {}
+
+  @override
+  void setRecordingCompletionHandler(
+    void Function(Duration duration)? handler,
+  ) {}
 }
 
 // ========== RetellRecordingController ==========

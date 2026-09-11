@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:echo_loop/models/speech_practice_models.dart';
 import 'package:echo_loop/providers/offline_asr_settings_provider.dart';
 import 'package:echo_loop/providers/speech/speech_recording_controller.dart';
+import 'package:echo_loop/services/recording_service.dart';
 import 'package:echo_loop/services/speech_practice_platform.dart';
 
 import '../../helpers/mock_providers.dart';
@@ -33,6 +34,7 @@ class _FakeSpeechPracticeBackend implements SpeechPracticeBackend {
   bool? recognitionEnabled;
   String? activePromptId;
   int counter = 0;
+  int cancelSessionCalls = 0;
 
   _FakeSpeechPracticeBackend({this.autoEmitFinal = true});
 
@@ -99,7 +101,10 @@ class _FakeSpeechPracticeBackend implements SpeechPracticeBackend {
   }
 
   @override
-  Future<void> cancelSession() async {}
+  Future<void> cancelSession() {
+    cancelSessionCalls += 1;
+    return Future<void>.value();
+  }
 
   @override
   Future<void> deleteRecording(String filePath) async {}
@@ -140,6 +145,81 @@ class _FakeSpeechPracticeBackend implements SpeechPracticeBackend {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('RecordingService 统计回调', () {
+    test('正常停止回调有效时长，取消停止不回调', () async {
+      final backend = _FakeSpeechPracticeBackend(autoEmitFinal: false);
+      final service = RecordingService(backend);
+      final durations = <Duration>[];
+      service.onRecordingCompleted = durations.add;
+
+      await service.startRecording(promptId: 'shadowing:test:0');
+      await service.stopSession(
+        promptId: 'shadowing:test:0',
+        effectiveDurationMs: 1250,
+      );
+      expect(durations, [const Duration(milliseconds: 1250)]);
+
+      await service.startRecording(promptId: 'shadowing:test:1');
+      await service.cancelRecording();
+      expect(durations, [const Duration(milliseconds: 1250)]);
+
+      await service.dispose();
+      await backend.dispose();
+    });
+  });
+
+  group('SpeechRecordingController 录音服务生命周期', () {
+    test('ASR 后端切换不会替换进行中的录音服务', () async {
+      final firstBackend = _FakeSpeechPracticeBackend(autoEmitFinal: false);
+      final secondBackend = _FakeSpeechPracticeBackend(autoEmitFinal: false);
+      final selectedBackendProvider = StateProvider<SpeechPracticeBackend>(
+        (_) => firstBackend,
+      );
+      final container = ProviderContainer(
+        overrides: [
+          analyticsOverride(),
+          ...learningSettingsOverrides(listenAndRepeatRatingEnabled: false),
+          speechPracticeBackendProvider.overrideWith(
+            (ref) => ref.watch(selectedBackendProvider),
+          ),
+          recommendedAsrModelProvider.overrideWithValue(_testAsrModel),
+          offlineAsrSettingsProvider.overrideWith(
+            () => _FakeOfflineAsrSettingsNotifier(),
+          ),
+        ],
+      );
+      final controller = container.read(
+        speechRecordingControllerProvider.notifier,
+      );
+      addTearDown(() async {
+        await controller.fullReset();
+        await firstBackend.dispose();
+        await secondBackend.dispose();
+        container.dispose();
+      });
+
+      await controller.startRecording(
+        promptId: 'shadowing:backend-switch:0',
+        referenceText: 'Hello world',
+      );
+      firstBackend.emitSpeechStarted();
+      await Future<void>.value();
+
+      container.read(selectedBackendProvider.notifier).state = secondBackend;
+      container.read(speechPracticeBackendProvider);
+      await Future<void>.value();
+
+      await controller.cancelActiveRecording();
+
+      expect(firstBackend.cancelSessionCalls, 1);
+      expect(secondBackend.cancelSessionCalls, 0);
+      expect(
+        container.read(speechRecordingControllerProvider).phase,
+        SpeechRecordingPhase.idle,
+      );
+    });
+  });
 
   group('SpeechPracticeCompletionHeuristic', () {
     const heuristic = SpeechPracticeCompletionHeuristic();

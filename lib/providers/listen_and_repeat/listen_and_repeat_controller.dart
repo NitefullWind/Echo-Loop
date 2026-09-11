@@ -2,7 +2,7 @@
 ///
 /// 组合 [RepeatFlowEngine] 驱动跟读流程，添加跟读页面专属逻辑：
 /// - 初始化（读书签/断点/设置）
-/// - 学习计时（StudyTaskControllerMixin）
+/// - 页面级学习统计计时与录音输出统计
 /// - 书签管理、断点保存、进度统计
 ///
 /// Screen 只读 state、只调公开方法，不直接操作资源服务。
@@ -26,8 +26,14 @@ import '../../models/sentence.dart';
 import '../../models/sentence_playback_result.dart';
 import '../../models/study_stage.dart';
 import '../../services/app_logger.dart';
+import '../../services/study_session_timer.dart';
+import '../../services/study_time_service.dart';
 import '../audio_engine/audio_engine_provider.dart';
 import '../audio_engine/foreground_audio_engine_provider.dart';
+import '../daily_study_time_provider.dart';
+import '../study_duration_provider.dart';
+import '../study_stats_provider.dart';
+import '../listening_practice/listening_practice_provider.dart';
 import '../learning_progress_provider.dart';
 import '../learning_session/sentence_playback_engine.dart';
 import '../learning_session/intensive_listen_playback_driver.dart';
@@ -40,7 +46,6 @@ import '../listening_practice/bookmark_manager.dart';
 import '../favorite_sentence_lifecycle_provider.dart';
 import '../intensive_listen_prefs_provider.dart';
 import '../../models/stage_settings_overrides.dart';
-import '../study_task_controller_mixin.dart';
 import 'listen_and_repeat_session_state.dart';
 import 'listen_and_repeat_settings_provider.dart';
 
@@ -48,8 +53,7 @@ part 'listen_and_repeat_controller.g.dart';
 
 /// 跟读会话控制器
 @Riverpod(keepAlive: true)
-class ListenAndRepeatController extends _$ListenAndRepeatController
-    with StudyTaskControllerMixin {
+class ListenAndRepeatController extends _$ListenAndRepeatController {
   /// 跟读流程引擎
   late final RepeatFlowEngine _engine;
 
@@ -68,9 +72,19 @@ class ListenAndRepeatController extends _$ListenAndRepeatController
   MediaEngine? _ownedMediaEngine;
   int? _ownedMediaGeneration;
   SenseGroupRangePlayback? _senseGroupRangePlayback;
+  late StudyTimeService _studyTimeService;
+  StudySessionTimer? _studySessionTimer;
+  Future<void>? _exitInFlight;
+  String? _studyAudioItemId;
+  bool _manageForegroundAudioEngine = true;
+  int _studySessionGeneration = 0;
 
   @override
   ListenAndRepeatSessionState build() {
+    _studyTimeService = ref.read(studyTimeServiceProvider);
+    final speechController = ref.read(
+      speechRecordingControllerProvider.notifier,
+    );
     _playback = ForegroundSentencePlaybackDriver(
       ref.read(foregroundAudioEngineProvider.notifier),
     );
@@ -114,8 +128,10 @@ class ListenAndRepeatController extends _$ListenAndRepeatController
     ref.onDispose(() {
       _playback.unbindLockScreen();
       _engine.dispose();
+      speechController.setRecordingCompletionHandler(null);
       final mediaEngine = _ownedMediaEngine;
       if (mediaEngine != null) unawaited(mediaEngine.releaseFromScreen());
+      unawaited(_disposeStudySessionOnProviderDispose());
     });
     return const ListenAndRepeatSessionState();
   }
@@ -136,6 +152,10 @@ class ListenAndRepeatController extends _$ListenAndRepeatController
     SentencePlaybackDriver? playbackDriver,
     bool usesMediaEngine = false,
   }) async {
+    await _disposeStudySessionTimer();
+    _studySessionGeneration += 1;
+    _studyAudioItemId = audioItemId;
+    _manageForegroundAudioEngine = !usesMediaEngine;
     _sessionPrepared = false;
     _isFreePlay = isFreePlay;
     _usesMediaEngine = usesMediaEngine;
@@ -203,14 +223,20 @@ class ListenAndRepeatController extends _$ListenAndRepeatController
         .read(listenAndRepeatSettingsProvider.notifier)
         .initialize(settings, slot);
 
-    // 学习任务通用初始化（计时、LP、音频、analytics、recorder 注入）
-    await initStudyTask(
-      ref,
-      audioItemId: audioItemId,
-      stage: StudyStage.listenAndRepeat,
-      isFreePlay: isFreePlay,
-      manageForegroundAudioEngine: !usesMediaEngine,
-    );
+    // 跟读页面独占前台学习资源，避免自由播放器在页面内继续响应播放事件。
+    ref.read(listeningPracticeProvider.notifier).suspendListeners();
+    if (_manageForegroundAudioEngine) {
+      await _ensureForegroundAudioLoaded(audioItemId);
+      ref.read(foregroundAudioEngineProvider.notifier).setRecorder(null);
+    }
+
+    final studySessionGeneration = _studySessionGeneration;
+    ref
+        .read(speechRecordingControllerProvider.notifier)
+        .setRecordingCompletionHandler(
+          (duration) =>
+              _recordSpeechRecognition(duration, studySessionGeneration),
+        );
 
     // 构造 config 并准备会话
     final config = RepeatFlowConfig(
@@ -244,6 +270,26 @@ class ListenAndRepeatController extends _$ListenAndRepeatController
       startIndex: startIndex,
       isFreePlay: isFreePlay,
     );
+    final timer = StudySessionTimer(
+      studyTimeService: _studyTimeService,
+      stage: StudyStage.listenAndRepeat,
+      activityGate: ref.read(studyActivityGateProvider),
+      idleTimeout: const Duration(minutes: 2),
+      logScope: 'ListenAndRepeatTimer',
+    );
+    _studySessionTimer = timer;
+    timer.start();
+    AppLogger.log(
+      'ListenAndRepeatStats',
+      'session.ready audioItemId=$audioItemId '
+          'sentenceCount=${practiceSentences.length} '
+          'isFreePlay=$isFreePlay usesMediaEngine=$usesMediaEngine',
+    );
+    ref.read(analyticsServiceProvider).track(Events.learningStart, {
+      ...ref.audioEventParams(audioItemId),
+      EventParams.stage: StudyStage.listenAndRepeat.name,
+      EventParams.isFreePractice: isFreePlay ? 1 : 0,
+    });
     _playback.bindLockScreen(
       onPlay: replayCurrentSentence,
       onPause: () async => enterWaitingForUser(),
@@ -455,11 +501,12 @@ class ListenAndRepeatController extends _$ListenAndRepeatController
   /// 停止会话
   void stopSession() => _engine.stopSession();
 
-  /// 释放资源
-  void disposeSession() {
+  /// 释放流程和录音资源。
+  Future<void> disposeSession() async {
+    await _playback.invalidateSession();
     _playback.unbindLockScreen();
     _engine.stopSession();
-    ref.read(speechRecordingControllerProvider.notifier).fullReset();
+    await ref.read(speechRecordingControllerProvider.notifier).fullReset();
   }
 
   /// 应用会话内设置变更，并立即按新配置重建当前句流程。
@@ -478,9 +525,11 @@ class ListenAndRepeatController extends _$ListenAndRepeatController
     );
   }
 
-  /// 暂停学习计时（完成弹窗显示时调用）
-  // ignore: use super method directly
-  void pauseTimer() => pauseStudyTimer();
+  /// 标记跟读页面仍有用户活动，使页面级学习计时器恢复计时。
+  void markStudyActivity() => _studySessionTimer?.markActivity();
+
+  /// 当前跟读页面累计的有效学习时长，供结束埋点复用。
+  Duration get elapsed => _studySessionTimer?.elapsed ?? Duration.zero;
 
   // ========== 书签 & 进度 ==========
 
@@ -541,31 +590,17 @@ class ListenAndRepeatController extends _$ListenAndRepeatController
         .completeCurrentSubStage(_engine.config.audioItemId);
   }
 
-  /// 退出学习模式
-  Future<void> exitLearningMode() async {
-    if (_sessionPrepared) {
-      ref.read(analyticsServiceProvider).track(Events.listenRepeatComplete, {
-        ...ref.audioEventParams(_engine.config.audioItemId),
-        EventParams.totalSentences: _sentences.length,
-      });
-    }
-    disposeSession();
-    await _senseGroupRangePlayback?.cancel();
-    await disposeStudyTask(ref);
-    if (_usesMediaEngine) {
-      final mediaEngine = _ownedMediaEngine;
-      final mediaGeneration = _ownedMediaGeneration;
-      if (mediaEngine != null && mediaGeneration != null) {
-        await _releaseOwnedMediaEngine(mediaEngine, mediaGeneration);
-      }
-    }
-    _mediaSessionReady = false;
-    _usesMediaEngine = false;
-    _ownedMediaEngine = null;
-    _ownedMediaGeneration = null;
-    _senseGroupRangePlayback = null;
-    _sessionPrepared = false;
-    state = state.copyWith(usesMediaEngine: false);
+  /// 幂等退出跟读页面，并刷写页面计时器和统计队列。
+  Future<void> exitLearningMode() {
+    final inFlight = _exitInFlight;
+    if (inFlight != null) return inFlight;
+
+    late final Future<void> tracked;
+    tracked = _exitLearningModeInternal().whenComplete(() {
+      if (identical(_exitInFlight, tracked)) _exitInFlight = null;
+    });
+    _exitInFlight = tracked;
+    return tracked;
   }
 
   // ========== 数据访问 ==========
@@ -593,6 +628,21 @@ class ListenAndRepeatController extends _$ListenAndRepeatController
   /// 句子列表
   List<Sentence> get sentences => List.unmodifiable(_sentences);
 
+  /// 确保前台音频引擎已经加载当前学习材料。
+  Future<void> _ensureForegroundAudioLoaded(String audioItemId) async {
+    final engineState = ref.read(foregroundAudioEngineProvider);
+    if (engineState.currentAudioId == audioItemId && !engineState.isLoading) {
+      return;
+    }
+    final practice = ref.read(listeningPracticeProvider);
+    final audioItem = practice.currentAudioItem;
+    if (audioItem != null && audioItem.id == audioItemId) {
+      await ref
+          .read(foregroundAudioEngineProvider.notifier)
+          .loadAudio(audioItem, practice.settings.playbackSpeed);
+    }
+  }
+
   /// 仅释放仍由指定 generation 持有的媒体，避免旧异步回调释放新会话。
   Future<void> _releaseOwnedMediaEngine(
     MediaEngine mediaEngine,
@@ -605,6 +655,202 @@ class ListenAndRepeatController extends _$ListenAndRepeatController
     _ownedMediaEngine = null;
     _ownedMediaGeneration = null;
     await mediaEngine.releaseFromScreen();
+  }
+
+  /// 记录一次跟读录音的有效输出时长，并丢弃退出后的迟到回调。
+  void _recordSpeechRecognition(Duration duration, int sessionGeneration) {
+    if (sessionGeneration != _studySessionGeneration ||
+        _studySessionTimer == null) {
+      AppLogger.log(
+        'ListenAndRepeatStats',
+        'speechRecognition.discarded durationMs=${duration.inMilliseconds} '
+            'callbackGeneration=$sessionGeneration '
+            'currentGeneration=$_studySessionGeneration '
+            'hasTimer=${_studySessionTimer != null}',
+      );
+      return;
+    }
+    AppLogger.log(
+      'ListenAndRepeatStats',
+      'speechRecognition.submit stage=${StudyStage.listenAndRepeat.name} '
+          'durationMs=${duration.inMilliseconds} generation=$sessionGeneration',
+    );
+    _studyTimeService.submitSpeechRecognition(
+      duration: duration,
+      stage: StudyStage.listenAndRepeat,
+    );
+  }
+
+  /// 释放当前页面计时器；初始化新会话时也复用此方法，避免计时器泄漏。
+  Future<void> _disposeStudySessionTimer() async {
+    final timer = _studySessionTimer;
+    _studySessionTimer = null;
+    if (timer == null) return;
+    try {
+      await timer.dispose();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'listen and repeat timer cleanup failed '
+            'error=$error\n$stackTrace',
+      );
+    }
+  }
+
+  /// Provider 被动销毁时兜底刷写统计队列，避免非路由退出丢失异步事件。
+  Future<void> _disposeStudySessionOnProviderDispose() async {
+    await _disposeStudySessionTimer();
+    try {
+      await _studyTimeService.flush();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'listen and repeat provider statistics flush failed '
+            'error=$error\n$stackTrace',
+      );
+    }
+  }
+
+  Future<void> _exitLearningModeInternal() async {
+    final audioItemId = _studyAudioItemId;
+    final wasPrepared = _sessionPrepared;
+    final studyDuration = elapsed;
+    final timer = _studySessionTimer;
+    final usesMediaEngine = _usesMediaEngine;
+    final manageForegroundAudioEngine = _manageForegroundAudioEngine;
+
+    _studySessionGeneration += 1;
+    _mediaEntryGeneration += 1;
+
+    if (wasPrepared && audioItemId != null) {
+      ref.read(analyticsServiceProvider).track(Events.listenRepeatComplete, {
+        ...ref.audioEventParams(audioItemId),
+        EventParams.totalSentences: _sentences.length,
+      });
+    }
+    if (audioItemId != null) {
+      ref.read(analyticsServiceProvider).track(Events.learningEnd, {
+        ...ref.audioEventParams(audioItemId),
+        EventParams.stage: StudyStage.listenAndRepeat.name,
+        EventParams.durationMs: studyDuration.inMilliseconds,
+        EventParams.isFreePractice: _isFreePlay ? 1 : 0,
+      });
+    }
+
+    try {
+      await disposeSession();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'listen and repeat session cleanup failed '
+            'error=$error\n$stackTrace',
+      );
+    }
+    try {
+      await _senseGroupRangePlayback?.cancel();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'listen and repeat range playback cleanup failed '
+            'error=$error\n$stackTrace',
+      );
+    }
+
+    try {
+      await timer?.dispose();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'listen and repeat timer flush failed error=$error\n$stackTrace',
+      );
+    } finally {
+      if (identical(_studySessionTimer, timer)) _studySessionTimer = null;
+    }
+    try {
+      await _studyTimeService.flush();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'listen and repeat statistics flush failed '
+            'error=$error\n$stackTrace',
+      );
+    }
+
+    ref
+        .read(speechRecordingControllerProvider.notifier)
+        .setRecordingCompletionHandler(null);
+    if (manageForegroundAudioEngine) {
+      final foreground = ref.read(foregroundAudioEngineProvider.notifier);
+      try {
+        await foreground.clearClip();
+      } catch (error, stackTrace) {
+        AppLogger.log(
+          'StudyExit',
+          'listen and repeat foreground clip cleanup failed '
+              'error=$error\n$stackTrace',
+        );
+      }
+      try {
+        await foreground.stop();
+      } catch (error, stackTrace) {
+        AppLogger.log(
+          'StudyExit',
+          'listen and repeat foreground playback cleanup failed '
+              'error=$error\n$stackTrace',
+        );
+      }
+      foreground.setRecorder(null);
+    }
+
+    final practice = ref.read(listeningPracticeProvider.notifier);
+    practice.resumeListeners();
+    try {
+      await practice.syncBookmarks();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'listen and repeat bookmark sync failed error=$error\n$stackTrace',
+      );
+    }
+
+    ref.invalidate(dailyStudyTimeProvider);
+    ref.invalidate(studyDurationRecordsProvider);
+    try {
+      await ref.read(studyStatsNotifierProvider.notifier).refresh();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'listen and repeat study stats refresh failed '
+            'error=$error\n$stackTrace',
+      );
+    }
+
+    if (usesMediaEngine) {
+      final mediaEngine = _ownedMediaEngine;
+      final mediaGeneration = _ownedMediaGeneration;
+      if (mediaEngine != null && mediaGeneration != null) {
+        try {
+          await _releaseOwnedMediaEngine(mediaEngine, mediaGeneration);
+        } catch (error, stackTrace) {
+          AppLogger.log(
+            'StudyExit',
+            'listen and repeat media cleanup failed '
+                'error=$error\n$stackTrace',
+          );
+        }
+      }
+    }
+
+    _mediaSessionReady = false;
+    _usesMediaEngine = false;
+    _ownedMediaEngine = null;
+    _ownedMediaGeneration = null;
+    _senseGroupRangePlayback = null;
+    _sessionPrepared = false;
+    _studyAudioItemId = null;
+    _sentences = [];
+    state = const ListenAndRepeatSessionState();
+    AppLogger.log('StudyExit', 'listen and repeat cleanup complete');
   }
 
   // ========== Engine 回调实现 ==========
@@ -637,10 +883,26 @@ class ListenAndRepeatController extends _$ListenAndRepeatController
       sentence,
       ref.read(listenAndRepeatSettingsProvider).playbackSpeed,
     );
-    if (!driver.recordsStudyEventsInternally &&
-        result == SentencePlaybackResult.completed &&
+    if (result == SentencePlaybackResult.completed &&
         flowToken == state.flowToken) {
-      studyEventRecorder?.onSentencePlayed(sentence);
+      AppLogger.log(
+        'ListenAndRepeatStats',
+        'sentencePlayback.submit stage=${StudyStage.listenAndRepeat.name} '
+            'sentenceIndex=${state.sentenceIndex} '
+            'durationMs=${sentence.duration.inMilliseconds} flowToken=$flowToken',
+      );
+      _studyTimeService.submitSentencePlayback(
+        duration: sentence.duration,
+        text: sentence.text,
+        stage: StudyStage.listenAndRepeat,
+      );
+    } else {
+      AppLogger.log(
+        'ListenAndRepeatStats',
+        'sentencePlayback.discarded result=${result.name} '
+            'sentenceIndex=${state.sentenceIndex} '
+            'flowToken=$flowToken currentFlowToken=${state.flowToken}',
+      );
     }
     return result;
   }

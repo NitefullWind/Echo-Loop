@@ -28,7 +28,7 @@ part 'foreground_audio_engine_provider.g.dart';
 /// `playToEnd`（媒体会话/整篇循环专属）。
 @Riverpod(keepAlive: true)
 class ForegroundAudioEngine extends _$ForegroundAudioEngine {
-  /// 学习事件记录器（由各前台任务进入时注入，退出时传 null）
+  /// 学习事件记录器（由仍使用旧统计链路的前台任务注入，退出时传 null）
   StudyEventRecorder? _recorder;
 
   /// 设置学习事件记录器。

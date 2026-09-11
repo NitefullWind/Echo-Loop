@@ -75,6 +75,12 @@ class RecordingService {
   /// Provider 进入学习模式时注入、退出时置 null。
   StudyEventRecorder? recorder;
 
+  /// 录音正常停止后的统计回调。
+  ///
+  /// 回调接收停止时计算出的有效录音时长；取消录音不会触发回调。
+  /// 新学习统计链路通过此回调接收输出时长，避免业务层重复计算录音时长。
+  void Function(Duration duration)? onRecordingCompleted;
+
   RecordingService(this._backend);
 
   /// 当前平台是否支持录音。
@@ -228,6 +234,7 @@ class RecordingService {
             : DateTime.now().difference(startedAt).inMilliseconds);
     if (durationMs > 0) {
       recorder?.onRecordingCompleted(durationMs);
+      onRecordingCompleted?.call(Duration(milliseconds: durationMs));
     }
 
     _finalEventPromptId = promptId;

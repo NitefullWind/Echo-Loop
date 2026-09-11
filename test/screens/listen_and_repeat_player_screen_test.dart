@@ -161,9 +161,6 @@ class _TestListenAndRepeatController extends ListenAndRepeatController {
   }
 
   @override
-  void pauseStudyTimer() {}
-
-  @override
   Future<void> incrementPassCount() async {}
 
   @override
@@ -322,6 +319,11 @@ class _StaticSpeechRecordingController extends SpeechRecordingController {
 
   @override
   Future<void> cancelActiveRecording() async {}
+
+  @override
+  void setRecordingCompletionHandler(
+    void Function(Duration duration)? handler,
+  ) {}
 }
 
 void main() {
@@ -481,11 +483,7 @@ void main() {
       );
       expect(
         tester.getTopRight(find.byType(BookmarkToggleRow)).dx,
-        closeTo(
-          tester.getSize(find.byType(Scaffold)).width -
-              AppSpacing.m,
-          1,
-        ),
+        closeTo(tester.getSize(find.byType(Scaffold)).width - AppSpacing.m, 1),
       );
     });
 

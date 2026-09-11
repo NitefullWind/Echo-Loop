@@ -16,6 +16,7 @@ import 'package:echo_loop/models/media_load_result.dart';
 import 'package:echo_loop/models/intensive_listen_prefs.dart';
 import 'package:echo_loop/models/sentence.dart';
 import 'package:echo_loop/models/sentence_playback_result.dart';
+import 'package:echo_loop/models/study_stage.dart';
 import 'package:echo_loop/providers/audio_engine/audio_engine_provider.dart';
 import 'package:echo_loop/providers/audio_engine/foreground_audio_engine_provider.dart';
 import 'package:echo_loop/providers/speech/speech_recording_controller.dart';
@@ -33,6 +34,57 @@ import 'package:echo_loop/services/learned_vocabulary_tracker.dart';
 import '../../helpers/mock_providers.dart';
 
 class _MockBookmarkDao extends Mock implements BookmarkDao {}
+
+class _RecordingStudyTimeService extends FakeStudyTimeService {
+  final List<({Duration duration, String text, StudyStage stage})>
+  sentencePlaybacks = [];
+  final List<({Duration duration, StudyStage stage})> speechRecognitions = [];
+  final List<
+    ({Duration studyDuration, Duration inputDuration, StudyStage stage})
+  >
+  sessionDurations = [];
+  int flushCalls = 0;
+
+  @override
+  void submitSentencePlayback({
+    required Duration duration,
+    required String text,
+    required StudyStage stage,
+    bool recordInputDuration = true,
+    DateTime? date,
+  }) {
+    sentencePlaybacks.add((duration: duration, text: text, stage: stage));
+  }
+
+  @override
+  void submitSpeechRecognition({
+    required Duration duration,
+    int producedWordCount = 0,
+    required StudyStage stage,
+    DateTime? date,
+  }) {
+    speechRecognitions.add((duration: duration, stage: stage));
+  }
+
+  @override
+  Future<void> recordSessionDurations({
+    required Duration studyDuration,
+    Duration inputDuration = Duration.zero,
+    required StudyStage stage,
+    DateTime? date,
+  }) async {
+    sessionDurations.add((
+      studyDuration: studyDuration,
+      inputDuration: inputDuration,
+      stage: stage,
+    ));
+  }
+
+  @override
+  Future<void> flush() async {
+    flushCalls += 1;
+  }
+}
 
 class _TestStudyStatsNotifier extends StudyStatsNotifier {
   @override
@@ -174,14 +226,17 @@ void main() {
   late ProviderContainer container;
   late ListenAndRepeatController controller;
   late AppDatabase database;
+  late _RecordingStudyTimeService studyTimeService;
 
   setUp(() {
     database = AppDatabase(NativeDatabase.memory());
+    studyTimeService = _RecordingStudyTimeService();
     container = ProviderContainer(
       overrides: [
         appDatabaseProvider.overrideWithValue(database),
         foregroundAudioEngineProvider.overrideWith(() => _InstantAudioEngine()),
         audioEngineProvider.overrideWith(TestAudioEngine.new),
+        studyTimeServiceProvider.overrideWithValue(studyTimeService),
         speechRecordingControllerProvider.overrideWith(
           TestSpeechRecordingController.new,
         ),
@@ -368,6 +423,102 @@ void main() {
       await mediaEngine.releaseStarted.future;
 
       expect(mediaEngine.releaseCalls, 1);
+    });
+  });
+
+  group('新学习统计', () {
+    test('完整原句播放提交输入统计，且取消播放不提交', () async {
+      await controller.prepareSession(
+        sentences: createTestSentences(count: 1),
+        config: _testConfig(),
+      );
+      await controller.startPlaying();
+
+      expect(studyTimeService.sentencePlaybacks, hasLength(1));
+      expect(studyTimeService.sentencePlaybacks.single, (
+        duration: const Duration(seconds: 5),
+        text: 'Test sentence number 1.',
+        stage: StudyStage.listenAndRepeat,
+      ));
+
+      final controlledEngine = _ControlledAudioEngine();
+      container.dispose();
+      studyTimeService = _RecordingStudyTimeService();
+      container = ProviderContainer(
+        overrides: [
+          appDatabaseProvider.overrideWithValue(database),
+          foregroundAudioEngineProvider.overrideWith(() => controlledEngine),
+          audioEngineProvider.overrideWith(TestAudioEngine.new),
+          studyTimeServiceProvider.overrideWithValue(studyTimeService),
+          speechRecordingControllerProvider.overrideWith(
+            TestSpeechRecordingController.new,
+          ),
+        ],
+      );
+      controller = container.read(listenAndRepeatControllerProvider.notifier);
+      await controller.prepareSession(
+        sentences: createTestSentences(count: 1),
+        config: _testConfig(),
+      );
+
+      final playing = controller.startPlaying();
+      await Future<void>.delayed(Duration.zero);
+      await controller.disposeSession();
+      controlledEngine.playCompleter?.complete();
+      await playing;
+
+      expect(studyTimeService.sentencePlaybacks, isEmpty);
+    });
+
+    test('页面计时在退出时写入总时长并刷写统计队列', () async {
+      final bookmarkDao = _MockBookmarkDao();
+      when(
+        () => bookmarkDao.getBookmarkedIndices('test-audio'),
+      ).thenAnswer((_) async => {0});
+      final statsContainer = ProviderContainer(
+        overrides: [
+          appDatabaseProvider.overrideWithValue(database),
+          foregroundAudioEngineProvider.overrideWith(
+            () => _InstantAudioEngine(),
+          ),
+          audioEngineProvider.overrideWith(TestAudioEngine.new),
+          bookmarkDaoProvider.overrideWithValue(bookmarkDao),
+          learningProgressNotifierProvider.overrideWith(
+            TestLearningProgressNotifier.new,
+          ),
+          listeningPracticeProvider.overrideWith(TestListeningPractice.new),
+          studyTimeServiceProvider.overrideWithValue(studyTimeService),
+          studyStatsNotifierProvider.overrideWith(_TestStudyStatsNotifier.new),
+          speechRecordingControllerProvider.overrideWith(
+            TestSpeechRecordingController.new,
+          ),
+          analyticsOverride(),
+        ],
+      );
+      addTearDown(statsContainer.dispose);
+      final statsController = statsContainer.read(
+        listenAndRepeatControllerProvider.notifier,
+      );
+
+      await statsController.initialize(
+        audioItemId: 'test-audio',
+        allSentences: createTestSentences(count: 1),
+        isFreePlay: false,
+        scope: ListenAndRepeatScope.fullText,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await statsController.exitLearningMode();
+
+      expect(studyTimeService.sessionDurations, hasLength(1));
+      expect(
+        studyTimeService.sessionDurations.single.stage,
+        StudyStage.listenAndRepeat,
+      );
+      expect(
+        studyTimeService.sessionDurations.single.studyDuration,
+        greaterThan(Duration.zero),
+      );
+      expect(studyTimeService.flushCalls, 1);
     });
   });
 
@@ -608,20 +759,20 @@ void main() {
         () => bookmarkDao.removeBookmarks(any(), any()),
       ).thenAnswer((_) async {});
       when(() => bookmarkDao.addBookmark(any())).thenAnswer((_) async {});
-      when(
-        () => bookmarkDao.getByAudioAndSentence(any(), any()),
-      ).thenAnswer((_) async => Bookmark(
-        id: 1,
-        memorySubjectId: 'subject-1',
-        audioItemId: 'test-audio',
-        sentenceIndex: 0,
-        sentenceText: 'First sentence.',
-        startTime: 0,
-        endTime: 1,
-        createdAt: DateTime(2026),
-        updatedAt: DateTime(2026),
-        syncStatus: 0,
-      ));
+      when(() => bookmarkDao.getByAudioAndSentence(any(), any())).thenAnswer(
+        (_) async => Bookmark(
+          id: 1,
+          memorySubjectId: 'subject-1',
+          audioItemId: 'test-audio',
+          sentenceIndex: 0,
+          sentenceText: 'First sentence.',
+          startTime: 0,
+          endTime: 1,
+          createdAt: DateTime(2026),
+          updatedAt: DateTime(2026),
+          syncStatus: 0,
+        ),
+      );
 
       final initializedContainer = ProviderContainer(
         overrides: [
