@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart' as ja;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:echo_loop/database/providers.dart';
 import 'package:echo_loop/models/playback_settings.dart';
 import 'package:echo_loop/models/sentence.dart';
 import 'package:echo_loop/providers/audio_engine/audio_engine_provider.dart';
@@ -143,6 +144,7 @@ void main() {
     container = ProviderContainer(
       overrides: [
         audioEngineProvider.overrideWith(() => engine),
+        studyTimeServiceProvider.overrideWithValue(FakeStudyTimeService()),
         listeningPracticeProvider.overrideWith(
           () => _CountingListeningPractice(),
         ),

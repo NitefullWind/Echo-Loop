@@ -117,6 +117,15 @@ class _RecordingTtsController extends TtsController {
   }
 
   @override
+  Future<AudioPlaybackResult> speakWithResult(
+    String text, {
+    String? key,
+  }) async {
+    spokenTexts.add(text);
+    return AudioPlaybackResult.completed;
+  }
+
+  @override
   Future<void> stop() async {}
 
   @override
@@ -131,12 +140,18 @@ class _RecordingPronunciationPlayback extends TextPlaybackController {
   TextPlaybackState build() => const TextPlaybackState();
 
   @override
-  Future<void> play(
-    PronunciationClip clip, {
-    required String fallbackText,
-    String? fallbackKey,
+  Future<AudioPlaybackResult> speakWithResult(
+    String text, {
+    String? key,
   }) async {
-    playedClips.add(clip);
+    final clips = ref.read(pronunciationClipsProvider(text));
+    if (clips.isNotEmpty) {
+      playedClips.add(clips.first);
+      return AudioPlaybackResult.completed;
+    }
+    return ref
+        .read(ttsControllerProvider.notifier)
+        .speakWithResult(text, key: key);
   }
 }
 

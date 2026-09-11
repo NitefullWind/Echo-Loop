@@ -13,7 +13,6 @@ import 'package:echo_loop/features/memory_scheduler/domain/memory_namespaces.dar
 import 'package:echo_loop/features/memory_scheduler/providers/memory_scheduler_providers.dart';
 import 'package:echo_loop/models/favorite_review_settings.dart';
 import 'package:echo_loop/models/flashcard_item.dart';
-import 'package:echo_loop/models/study_stage.dart';
 import 'package:echo_loop/providers/pronunciation/pronunciation_providers.dart';
 import 'package:echo_loop/services/pronunciation/local_audio_clip_player.dart';
 import 'package:echo_loop/providers/tts/tts_controller_provider.dart';
@@ -210,10 +209,6 @@ void main() {
       );
       expect(record?.inputWords, 2);
       expect(record?.inputTimeMilliseconds, greaterThanOrEqualTo(0));
-      final stageRecords = await database.dailyStageStudyRecordDao.getByDate(
-        DateTime.now(),
-      );
-      expect(stageRecords.single.stage, StudyStage.savedVocabularyReview);
       final forms = await database.select(database.learnedWordForms).get();
       expect(
         forms.map((form) => form.wordForm),

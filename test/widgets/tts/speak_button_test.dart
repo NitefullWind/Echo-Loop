@@ -1,6 +1,7 @@
 import 'package:echo_loop/providers/tts/tts_controller_provider.dart';
 import 'package:echo_loop/models/pronunciation/pronunciation_clip.dart';
 import 'package:echo_loop/providers/pronunciation/pronunciation_providers.dart';
+import 'package:echo_loop/services/pronunciation/local_audio_clip_player.dart';
 import 'package:echo_loop/widgets/tts/speak_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -23,6 +24,15 @@ class FakeTtsController extends TtsController {
   }
 
   @override
+  Future<AudioPlaybackResult> speakWithResult(
+    String text, {
+    String? key,
+  }) async {
+    calls.add((text: text, key: key ?? text));
+    return AudioPlaybackResult.completed;
+  }
+
+  @override
   Future<void> stop() async {}
 }
 
@@ -34,12 +44,16 @@ class FakePronunciationPlayback extends TextPlaybackController {
   TextPlaybackState build() => const TextPlaybackState();
 
   @override
-  Future<void> play(
-    PronunciationClip clip, {
-    required String fallbackText,
-    String? fallbackKey,
+  Future<AudioPlaybackResult> speakWithResult(
+    String text, {
+    String? key,
   }) async {
-    calls.add(clip);
+    final clips = ref.read(pronunciationClipsProvider(text));
+    if (clips.isNotEmpty) {
+      calls.add(clips.first);
+      return AudioPlaybackResult.completed;
+    }
+    return AudioPlaybackResult.failed;
   }
 }
 
