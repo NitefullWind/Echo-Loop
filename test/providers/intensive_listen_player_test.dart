@@ -1,6 +1,7 @@
 // 精听播放器状态测试
 import 'dart:async';
 
+import 'package:clock/clock.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,7 +10,9 @@ import 'package:echo_loop/database/enums.dart';
 import 'package:echo_loop/models/intensive_listen_settings.dart';
 import 'package:echo_loop/models/learning_progress.dart';
 import 'package:echo_loop/models/sentence.dart';
+import 'package:echo_loop/models/study_stage.dart';
 import 'package:echo_loop/providers/audio_engine/audio_engine_provider.dart';
+import 'package:echo_loop/database/providers.dart';
 import 'package:echo_loop/providers/intensive_annotation/intensive_annotation_phase.dart';
 import 'package:echo_loop/providers/learning_progress_provider.dart';
 import 'package:echo_loop/providers/learning_session/intensive_listen_player_provider.dart';
@@ -120,6 +123,72 @@ class _RecordingLearningProgressNotifier extends TestLearningProgressNotifier {
     );
     state = state.copyWith(progressMap: newMap);
   }
+}
+
+/// 记录逐句精听统计调用的测试服务，避免测试依赖真实数据库。
+class _RecordingStudyTimeService extends FakeStudyTimeService {
+  final List<_SentencePlaybackRecord> sentencePlaybacks = [];
+  final List<_SessionDurationRecord> sessionDurations = [];
+
+  @override
+  void submitSentencePlayback({
+    required Duration duration,
+    required String text,
+    required StudyStage stage,
+    bool recordInputDuration = true,
+    DateTime? date,
+  }) {
+    sentencePlaybacks.add(
+      _SentencePlaybackRecord(
+        duration: duration,
+        text: text,
+        stage: stage,
+        recordInputDuration: recordInputDuration,
+      ),
+    );
+  }
+
+  @override
+  Future<void> recordSessionDurations({
+    required Duration studyDuration,
+    Duration inputDuration = Duration.zero,
+    required StudyStage stage,
+    DateTime? date,
+  }) async {
+    sessionDurations.add(
+      _SessionDurationRecord(
+        studyDuration: studyDuration,
+        inputDuration: inputDuration,
+        stage: stage,
+      ),
+    );
+  }
+}
+
+class _SentencePlaybackRecord {
+  const _SentencePlaybackRecord({
+    required this.duration,
+    required this.text,
+    required this.stage,
+    required this.recordInputDuration,
+  });
+
+  final Duration duration;
+  final String text;
+  final StudyStage stage;
+  final bool recordInputDuration;
+}
+
+class _SessionDurationRecord {
+  const _SessionDurationRecord({
+    required this.studyDuration,
+    required this.inputDuration,
+    required this.stage,
+  });
+
+  final Duration studyDuration;
+  final Duration inputDuration;
+  final StudyStage stage;
 }
 
 void main() {
@@ -341,6 +410,96 @@ void main() {
       expect(nextSentence.isCurrentSentenceAutoMarked, false);
       // 难句集合保持
       expect(nextSentence.difficultSentences, {3});
+    });
+  });
+
+  group('逐句精听新学习统计', () {
+    late ProviderContainer container;
+    late _RecordingStudyTimeService studyTimeService;
+
+    ProviderContainer createContainer({TestAudioEngine? audioEngine}) {
+      studyTimeService = _RecordingStudyTimeService();
+      return ProviderContainer(
+        overrides: [
+          audioEngineProvider.overrideWith(
+            () => audioEngine ?? TestAudioEngine(),
+          ),
+          learningSessionProvider.overrideWith(() => TestLearningSession()),
+          analyticsOverride(),
+          ...studyTimeOverrides(),
+          studyTimeServiceProvider.overrideWithValue(studyTimeService),
+        ],
+      );
+    }
+
+    tearDown(() => container.dispose());
+
+    test('完整句播放写入逐句精听输入统计', () async {
+      container = createContainer();
+      final notifier = container.read(intensiveListenPlayerProvider.notifier);
+      final sentence = Sentence(
+        index: 0,
+        text: 'The quick brown fox.',
+        startTime: Duration.zero,
+        endTime: const Duration(seconds: 2),
+      );
+
+      await notifier.initialize([sentence]);
+      await notifier.startPlaying();
+
+      expect(studyTimeService.sentencePlaybacks, hasLength(1));
+      final record = studyTimeService.sentencePlaybacks.single;
+      expect(record.duration, const Duration(seconds: 2));
+      expect(record.text, sentence.text);
+      expect(record.stage, StudyStage.intensiveListen);
+      expect(record.recordInputDuration, isTrue);
+    });
+
+    test('取消播放不写入输入统计', () async {
+      final audioEngine = _DeferredBlindAudioEngine();
+      container = createContainer(audioEngine: audioEngine);
+      final notifier = container.read(intensiveListenPlayerProvider.notifier);
+      await notifier.initialize(createTestSentences(count: 1));
+
+      unawaited(notifier.startPlaying());
+      await Future<void>.delayed(Duration.zero);
+      await notifier.pause();
+
+      expect(studyTimeService.sentencePlaybacks, isEmpty);
+      await notifier.disposePlayer();
+    });
+
+    test('讲解页完整重播写入输入统计', () async {
+      container = createContainer();
+      final notifier = container.read(intensiveListenPlayerProvider.notifier);
+      await notifier.initialize(createTestSentences(count: 1));
+
+      notifier.enterAnnotationMode();
+      await notifier.replayInAnnotationMode();
+
+      expect(studyTimeService.sentencePlaybacks, hasLength(1));
+      expect(
+        studyTimeService.sentencePlaybacks.single.stage,
+        StudyStage.intensiveListen,
+      );
+    });
+
+    test('页面退出刷写逐句精听总学习时长且不写入输入时长', () async {
+      var now = DateTime(2026, 9, 11, 12);
+      await withClock(Clock(() => now), () async {
+        container = createContainer();
+        final notifier = container.read(intensiveListenPlayerProvider.notifier);
+        await notifier.initialize(createTestSentences(count: 1));
+        now = now.add(const Duration(seconds: 3));
+
+        await notifier.disposePlayer();
+
+        expect(studyTimeService.sessionDurations, hasLength(1));
+        final record = studyTimeService.sessionDurations.single;
+        expect(record.studyDuration, const Duration(seconds: 3));
+        expect(record.inputDuration, Duration.zero);
+        expect(record.stage, StudyStage.intensiveListen);
+      });
     });
   });
 

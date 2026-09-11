@@ -16,9 +16,10 @@ import '../../models/intensive_listen_settings.dart';
 import '../../models/sentence.dart';
 import '../../models/sense_group_range_playback.dart';
 import '../../models/study_stage.dart';
+import '../../models/sentence_playback_result.dart';
 import '../../services/app_logger.dart';
-import '../../services/learned_vocabulary_tracker.dart';
-import '../../services/study_event_recorder.dart';
+import '../../services/study_session_timer.dart';
+import '../../services/study_time_service.dart';
 import '../../utils/sense_group_timing.dart';
 import '../audio_engine/audio_engine_provider.dart';
 import '../blind_flow/blind_practice_flow_engine.dart';
@@ -26,7 +27,6 @@ import '../blind_flow/blind_practice_flow_phase.dart';
 import '../blind_flow/blind_practice_flow_state.dart';
 import '../intensive_annotation/intensive_annotation_phase.dart';
 import '../intensive_annotation/intensive_annotation_state.dart';
-import '../learned_vocabulary_tracker_provider.dart';
 import '../intensive_listen_prefs_provider.dart';
 import '../learning_progress_provider.dart';
 import 'countdown_controller.dart';
@@ -183,11 +183,13 @@ class IntensiveListenState {
 @Riverpod(keepAlive: true)
 class IntensiveListenPlayer extends _$IntensiveListenPlayer {
   List<Sentence> _sentences = [];
-  late StudyEventRecorder _recorder;
   late BlindPracticeFlowEngine _blindEngine;
   final CountdownController _annotationCountdown = CountdownController();
   late IntensiveListenPlaybackDriver _playback;
+  late StudyTimeService _studyTimeService;
   SenseGroupRangePlayback? _senseGroupRangePlayback;
+  StudySessionTimer? _studySessionTimer;
+  Future<void>? _disposePlayerInFlight;
 
   int _currentSessionId = -1;
   bool _refreshBlindConfigWhenWaiting = false;
@@ -210,17 +212,7 @@ class IntensiveListenPlayer extends _$IntensiveListenPlayer {
 
   @override
   IntensiveListenState build() {
-    LearnedVocabularyTracker? vocabTracker;
-    try {
-      vocabTracker = ref.read(learnedVocabularyTrackerProvider);
-    } catch (e) {
-      AppLogger.log('Player', '⚠ vocabTracker 不可用（测试环境？）: $e');
-    }
-    _recorder = StudyEventRecorder(
-      studyTimeService: ref.read(studyTimeServiceProvider),
-      vocabTracker: vocabTracker,
-      stage: StudyStage.intensiveListen,
-    );
+    _studyTimeService = ref.read(studyTimeServiceProvider);
     _playback = AudioIntensiveListenPlaybackDriver(
       ref.read(audioEngineProvider.notifier),
     );
@@ -230,6 +222,7 @@ class IntensiveListenPlayer extends _$IntensiveListenPlayer {
       _blindEngine.dispose();
       _annotationCountdown.cancel();
       _currentSessionId = -1;
+      unawaited(_disposeStudySessionTimer());
     });
     return const IntensiveListenState();
   }
@@ -243,6 +236,7 @@ class IntensiveListenPlayer extends _$IntensiveListenPlayer {
     SenseGroupRangePlayback? senseGroupRangePlayback,
     bool usesMediaEngine = false,
   }) async {
+    await _disposeStudySessionTimer();
     _playback =
         playbackDriver ??
         AudioIntensiveListenPlaybackDriver(
@@ -272,6 +266,15 @@ class IntensiveListenPlayer extends _$IntensiveListenPlayer {
       settings: settings,
       usesMediaEngine: usesMediaEngine,
     );
+    final timer = StudySessionTimer(
+      studyTimeService: _studyTimeService,
+      stage: StudyStage.intensiveListen,
+      activityGate: ref.read(studyActivityGateProvider),
+      idleTimeout: const Duration(minutes: 2),
+      logScope: 'IntensiveListenTimer',
+    );
+    _studySessionTimer = timer;
+    timer.start();
     _prepareBlindFlow(startIndex: safeIndex);
 
     // 锁屏控制：每任务绑定一次（回调为稳定的 notifier 方法），整段任务期间锁屏
@@ -729,18 +732,83 @@ class IntensiveListenPlayer extends _$IntensiveListenPlayer {
     await _startBlindFlow();
   }
 
-  void disposePlayer() {
+  /// 标记逐句精听页面仍有用户活动，使页面级学习计时器恢复计时。
+  void markStudyActivity() => _studySessionTimer?.markActivity();
+
+  /// 逐句精听页面累计的有效学习时长，供退出埋点复用。
+  Duration get elapsed => _studySessionTimer?.elapsed ?? Duration.zero;
+
+  /// 结束逐句精听页面会话并刷写最终统计；重复调用共享同一次收尾操作。
+  Future<void> disposePlayer() {
+    final inFlight = _disposePlayerInFlight;
+    if (inFlight != null) return inFlight;
+
+    late final Future<void> tracked;
+    tracked = _disposePlayerInternal().whenComplete(() {
+      if (identical(_disposePlayerInFlight, tracked)) {
+        _disposePlayerInFlight = null;
+      }
+    });
+    _disposePlayerInFlight = tracked;
+    return tracked;
+  }
+
+  Future<void> _disposePlayerInternal() async {
     AppLogger.log(
       'IntensivePlayer',
       'disposePlayer: begin sentences=${_sentences.length} '
           'session=$_currentSessionId',
     );
+    try {
+      await _playback.invalidateSession();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'intensive playback invalidation failed error=$error\n$stackTrace',
+      );
+    }
     _playback.unbindLockScreen();
     _blindEngine.stopSession();
     _cleanupAnnotationSession();
+
+    final timer = _studySessionTimer;
+    _studySessionTimer = null;
+    try {
+      await timer?.dispose();
+    } catch (error, stackTrace) {
+      // 统计刷写失败不能阻断播放器、媒体链路和页面状态的清理。
+      AppLogger.log(
+        'StudyExit',
+        'intensive timer flush failed error=$error\n$stackTrace',
+      );
+    }
+
     _sentences = [];
     state = const IntensiveListenState();
     AppLogger.log('IntensivePlayer', 'disposePlayer: complete');
+  }
+
+  Future<void> _disposeStudySessionTimer() async {
+    final timer = _studySessionTimer;
+    _studySessionTimer = null;
+    if (timer == null) return;
+    try {
+      await timer.dispose();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'intensive timer reset flush failed error=$error\n$stackTrace',
+      );
+    }
+  }
+
+  /// 仅在句子真实播放完成后记录输入时长、词数和词形。
+  void _recordCompletedSentencePlayback(Sentence sentence) {
+    _studyTimeService.submitSentencePlayback(
+      duration: sentence.duration,
+      text: sentence.text,
+      stage: StudyStage.intensiveListen,
+    );
   }
 
   void _prepareBlindFlow({int? startIndex}) {
@@ -754,7 +822,6 @@ class IntensiveListenPlayer extends _$IntensiveListenPlayer {
             calculatePauseDuration(sentence.duration, state.settings),
         getSentenceIntervalDuration: (sentence) =>
             calculatePauseDuration(sentence.duration, state.settings),
-        onSentencePlayed: _recorder.onSentencePlayed,
         isManualMode: () => state.settings.isManualMode,
       ),
     );
@@ -831,14 +898,20 @@ class IntensiveListenPlayer extends _$IntensiveListenPlayer {
     }
   }
 
-  Future<bool> _playSentenceForBlind(Sentence sentence, int flowToken) async {
+  Future<bool> _playSentenceForBlind(Sentence sentence, int _) async {
     if (sentence.duration <= Duration.zero) return false;
     _persistCurrentSentenceIndexAsync();
     final engine = _playback;
     final sessionId = engine.newSession();
     await engine.setSpeed(state.settings.playbackSpeed);
-    await engine.playSentence(sentence, sessionId);
-    return true;
+    final result = await engine.playSentence(sentence, sessionId);
+    if (result == SentencePlaybackResult.completed) {
+      _recordCompletedSentencePlayback(sentence);
+      return true;
+    }
+    // 取消通常由切句或暂停触发，保留旧流程的当前句状态；流程 token
+    // 会在这些操作中失效，迟到回调不会推进新状态。只有明确失败才跳过句子。
+    return result == SentencePlaybackResult.cancelled;
   }
 
   Future<void> _goToSentence(int sentenceIndex) async {
@@ -911,17 +984,18 @@ class IntensiveListenPlayer extends _$IntensiveListenPlayer {
         _setAnnotationPhase(const InspectingAnnotation());
         state = state.copyWith(isPlaying: true);
       }
-      await engine.playSentence(sentence, sessionId);
+      final result = await engine.playSentence(sentence, sessionId);
 
       // 暂停会立即放弃当前讲解会话。即使底层播放器的取消回调晚到，
       // 旧重播也不能进入倒计时或覆盖图中的“继续”等待态。
-      if (_currentSessionId != sessionId ||
+      if (result != SentencePlaybackResult.completed ||
+          _currentSessionId != sessionId ||
           !engine.isActiveSession(sessionId)) {
         _clearPlayingIfCurrentSession(sessionId);
         return;
       }
 
-      _recorder.onSentencePlayed(sentence);
+      _recordCompletedSentencePlayback(sentence);
       if (_annotationWaitAfterCurrentPlayback) {
         _annotationWaitAfterCurrentPlayback = false;
         _setAnnotationPhase(const WaitingAnnotationUser());

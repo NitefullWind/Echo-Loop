@@ -338,14 +338,13 @@ class LearningSession extends _$LearningSession {
   }
 
   /// 上报 session_end 事件
-  void _trackSessionEnd() {
+  void _trackSessionEnd({int? durationMs}) {
     final analytics = ref.read(analyticsServiceProvider);
-    final durationMs = _studyStopwatch.elapsedMilliseconds;
     analytics.track(Events.learningEnd, {
       ...ref.audioEventParams(state.audioItemId),
       if (state.learningMode != null)
         EventParams.stage: state.learningMode!.name,
-      EventParams.durationMs: durationMs,
+      EventParams.durationMs: durationMs ?? _studyStopwatch.elapsedMilliseconds,
       EventParams.isFreePractice: state.isFreePlay ? 1 : 0,
     });
   }
@@ -636,7 +635,6 @@ class LearningSession extends _$LearningSession {
     IntensiveListenSettings settings = const IntensiveListenSettings(),
     String? settingsSlot,
   }) async {
-    _startStudyTimer();
     final practice = ref.read(listeningPracticeProvider.notifier);
     final currentSettings = ref.read(listeningPracticeProvider).settings;
     final progressNotifier = ref.read(
@@ -782,7 +780,6 @@ class LearningSession extends _$LearningSession {
       return MediaLoadResult.cancelled;
     }
 
-    _startStudyTimer();
     _trackSessionStart();
     AppLogger.log(
       'Session',
@@ -1300,10 +1297,15 @@ class LearningSession extends _$LearningSession {
   ///
   /// 根据当前学习模式分支处理：停止播放、释放资源、恢复 LP 监听。
   Future<void> exitLearningMode() async {
-    _trackSessionEnd();
-    _stopPeriodicSaveTimer();
-    await _saveStudyTime();
     final mode = state.learningMode;
+    final intensivePlayer = mode == LearningMode.intensiveListen
+        ? ref.read(intensiveListenPlayerProvider.notifier)
+        : null;
+    _trackSessionEnd(durationMs: intensivePlayer?.elapsed.inMilliseconds);
+    if (mode != LearningMode.intensiveListen) {
+      _stopPeriodicSaveTimer();
+      await _saveStudyTime();
+    }
     AppLogger.log(
       'Session',
       'exitLearningMode: begin mode=$mode chain=${state.playbackChain}',
@@ -1327,8 +1329,7 @@ class LearningSession extends _$LearningSession {
       blindPlayer.disposePlayer();
     } else if (mode == LearningMode.intensiveListen) {
       // 释放精听播放器资源
-      final intensivePlayer = ref.read(intensiveListenPlayerProvider.notifier);
-      intensivePlayer.disposePlayer();
+      await intensivePlayer?.disposePlayer();
     } else if (mode == LearningMode.listenAndRepeat) {
       // 跟读资源由 ListenAndRepeatController 在 Screen 层释放
     } else if (mode == LearningMode.retell) {

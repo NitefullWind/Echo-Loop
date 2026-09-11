@@ -1430,7 +1430,7 @@ class FakeIntensiveListenPlayer extends IntensiveListenPlayer {
   }
 
   @override
-  void disposePlayer() {
+  Future<void> disposePlayer() async {
     testSentences = [];
     state = const IntensiveListenState();
   }
