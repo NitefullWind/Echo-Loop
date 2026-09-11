@@ -833,8 +833,10 @@ class ReviewDifficultPractice extends _$ReviewDifficultPractice {
         .stopAndEvaluate(referenceText: referenceText);
   }
 
-  void _clearRecordingForRepeat() {
-    ref.read(speechRecordingControllerProvider.notifier).clearRecording();
+  Future<void> _clearRecordingForRepeat() {
+    return ref
+        .read(speechRecordingControllerProvider.notifier)
+        .clearRecording();
   }
 
   void _setMaxRecordingDuration(Duration duration) {

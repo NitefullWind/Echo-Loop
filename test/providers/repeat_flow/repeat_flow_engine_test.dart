@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:echo_loop/models/sentence.dart';
@@ -99,5 +101,58 @@ void main() {
 
     expect(recordingStarts, 0);
     expect(engine.state.phase, isA<WaitingForUser>());
+  });
+
+  test('重播会等待录音清理完成后才开始下一次播放', () async {
+    final clearGate = Completer<void>();
+    var playCalls = 0;
+    final engine = RepeatFlowEngine(
+      onStateChanged: (_) {},
+      callbacks: RepeatFlowCallbacks(
+        pauseAudio: () {},
+        playSentence: (_, _) async {
+          playCalls += 1;
+          return SentencePlaybackResult.completed;
+        },
+        startRecording:
+            ({
+              required promptId,
+              required referenceText,
+              required maxDuration,
+              referenceDuration,
+            }) {},
+        cancelRecording: () async {},
+        stopAndEvaluate: ({required referenceText}) async {},
+        clearRecording: () => clearGate.future,
+        setMaxRecordingDuration: (_) {},
+        hasDetectedSpeech: () => false,
+      ),
+    );
+    engine.prepare(
+      sentences: [
+        Sentence(
+          index: 0,
+          text: 'Practice this sentence.',
+          startTime: Duration.zero,
+          endTime: const Duration(seconds: 1),
+        ),
+      ],
+      config: RepeatFlowConfig(
+        audioItemId: 'audio-1',
+        getRepeatCount: (_) => 1,
+        getIntervalDuration: (_) => Duration.zero,
+        isManualMode: () => false,
+      ),
+    );
+
+    await engine.startPlaying();
+    expect(playCalls, 1);
+    final replay = engine.replayCurrentSentence();
+    await Future<void>.value();
+    expect(playCalls, 1);
+
+    clearGate.complete();
+    await replay;
+    expect(playCalls, 2);
   });
 }

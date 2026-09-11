@@ -280,7 +280,11 @@
 
 ## 稳定性与核心流程
 
+- [x] 修复 858b2ae3 接入后的跟读录音生命周期竞态：串行释放录音服务、阻断过期回合回调、等待录音清理后再播放，并暂停完成弹窗期间的学习计时。**完成时间**: 2026-09-11
+
 - [x] 修复 Android 14 冷启动系统 Splash 与 Flutter 首帧之间的 logo 尺寸跳变：Android 12+ 使用 density-independent VectorDrawable 统一 288dp 系统槽位与 Flutter/iOS 小 logo 的视觉比例，并补充资源回归测试。**完成时间**: 2026-09-07
+
+- [x] 修复 Android 14 冷启动系统 Splash 使用完整品牌图导致的 logo 尺寸跳变：为 Android 12+ 使用带安全区的专用 icon 资源。**完成时间**: 2026-09-06
 - [x] 修复数据库迁移 11 个单测的测试 fixture 缺表问题（`audio_items` / `bookmarks`）。**完成时间**: 2026-08-28
 - [ ] Android 离线 ASR 结束录音闪退：获取真机 `logcat` 与 `/data/tombstones`，定位并修复 Silero VAD native 崩溃。
 - [ ] 段落复述页面复用统一录音识别模块。

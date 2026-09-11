@@ -35,6 +35,9 @@ class _FakeSpeechPracticeBackend implements SpeechPracticeBackend {
   String? activePromptId;
   int counter = 0;
   int cancelSessionCalls = 0;
+  Completer<void>? warmupGate;
+  int startSessionCalls = 0;
+  int shutdownCalls = 0;
 
   _FakeSpeechPracticeBackend({this.autoEmitFinal = true});
 
@@ -60,7 +63,9 @@ class _FakeSpeechPracticeBackend implements SpeechPracticeBackend {
   }
 
   @override
-  Future<void> warmup({String locale = 'en-US'}) async {}
+  Future<void> warmup({String locale = 'en-US'}) async {
+    await warmupGate?.future;
+  }
 
   @override
   Future<int> getDeviceRamBytes() async => 0;
@@ -71,13 +76,16 @@ class _FakeSpeechPracticeBackend implements SpeechPracticeBackend {
   }
 
   @override
-  Future<void> shutdown() async {}
+  Future<void> shutdown() async {
+    shutdownCalls += 1;
+  }
 
   @override
   Future<String> startSession({
     required String promptId,
     String locale = 'en-US',
   }) async {
+    startSessionCalls += 1;
     activePromptId = promptId;
     counter += 1;
     return '/tmp/$promptId-$counter.caf';
@@ -146,23 +154,20 @@ class _FakeSpeechPracticeBackend implements SpeechPracticeBackend {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('RecordingService 统计回调', () {
-    test('正常停止回调有效时长，取消停止不回调', () async {
+  group('RecordingService 统计时长', () {
+    test('正常停止返回有效时长，取消停止不产生时长', () async {
       final backend = _FakeSpeechPracticeBackend(autoEmitFinal: false);
       final service = RecordingService(backend);
-      final durations = <Duration>[];
-      service.onRecordingCompleted = durations.add;
 
       await service.startRecording(promptId: 'shadowing:test:0');
-      await service.stopSession(
+      final result = await service.stopSession(
         promptId: 'shadowing:test:0',
         effectiveDurationMs: 1250,
       );
-      expect(durations, [const Duration(milliseconds: 1250)]);
+      expect(result.recordedDuration, const Duration(milliseconds: 1250));
 
       await service.startRecording(promptId: 'shadowing:test:1');
       await service.cancelRecording();
-      expect(durations, [const Duration(milliseconds: 1250)]);
 
       await service.dispose();
       await backend.dispose();
@@ -214,6 +219,46 @@ void main() {
 
       expect(firstBackend.cancelSessionCalls, 1);
       expect(secondBackend.cancelSessionCalls, 0);
+      expect(
+        container.read(speechRecordingControllerProvider).phase,
+        SpeechRecordingPhase.idle,
+      );
+    });
+
+    test('warmup 尚未完成时清理回合，不会在退出后启动录音', () async {
+      final backend = _FakeSpeechPracticeBackend(autoEmitFinal: false)
+        ..warmupGate = Completer<void>();
+      final container = ProviderContainer(
+        overrides: [
+          analyticsOverride(),
+          ...learningSettingsOverrides(listenAndRepeatRatingEnabled: false),
+          speechPracticeBackendProvider.overrideWithValue(backend),
+          recommendedAsrModelProvider.overrideWithValue(_testAsrModel),
+          offlineAsrSettingsProvider.overrideWith(
+            () => _FakeOfflineAsrSettingsNotifier(),
+          ),
+        ],
+      );
+      final controller = container.read(
+        speechRecordingControllerProvider.notifier,
+      );
+      addTearDown(() async {
+        await controller.fullReset();
+        await backend.dispose();
+        container.dispose();
+      });
+
+      final start = controller.startRecording(
+        promptId: 'shadowing:startup-cancel:0',
+        referenceText: 'Hello world',
+      );
+      await Future<void>.value();
+      await controller.clearRecording();
+      backend.warmupGate!.complete();
+      await start;
+
+      expect(backend.startSessionCalls, 0);
+      expect(backend.cancelSessionCalls, 0);
       expect(
         container.read(speechRecordingControllerProvider).phase,
         SpeechRecordingPhase.idle,

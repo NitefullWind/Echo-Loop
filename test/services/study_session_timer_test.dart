@@ -317,6 +317,38 @@ void main() {
     await timer.dispose();
   });
 
+  test('显式暂停期间活动不会偷偷恢复计时，恢复后继续原会话', () {
+    fakeAsync((async) {
+      withClock(async.getClock(DateTime(2026, 9, 8)), () {
+        final service = _RecordingStudyTimeService(db);
+        final timer = StudySessionTimer(
+          studyTimeService: service,
+          stage: StudyStage.listenAndRepeat,
+          activityGate: activityGate,
+          checkpointInterval: const Duration(seconds: 10),
+        );
+
+        timer.start();
+        async.elapse(const Duration(seconds: 1));
+        timer.pause();
+        async.flushMicrotasks();
+        final pausedAt = timer.elapsed;
+        async.elapse(const Duration(seconds: 5));
+        timer.markActivity();
+        expect(timer.elapsed, pausedAt);
+
+        timer.resume();
+        async.elapse(const Duration(seconds: 1));
+        expect(timer.elapsed, greaterThan(pausedAt));
+
+        final dispose = timer.dispose();
+        async.flushMicrotasks();
+        dispose.then((_) {});
+        async.flushMicrotasks();
+      });
+    });
+  });
+
   test('超过 idle timeout 后暂停，新的用户活动恢复同一会话', () {
     fakeAsync((async) {
       withClock(async.getClock(DateTime(2026, 9, 8)), () {

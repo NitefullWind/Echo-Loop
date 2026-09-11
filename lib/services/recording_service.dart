@@ -6,6 +6,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import '../models/speech_practice_models.dart';
 import 'app_logger.dart';
@@ -26,6 +27,9 @@ class RecordingResult {
   /// 错误消息。
   final String? errorMessage;
 
+  /// 本次录音实际计入统计的时长。
+  final Duration recordedDuration;
+
   /// 是否成功（有 final transcript 且无错误）。
   bool get isSuccess => errorCode == null && finalTranscript != null;
 
@@ -34,6 +38,7 @@ class RecordingResult {
     this.finalTranscript,
     this.errorCode,
     this.errorMessage,
+    this.recordedDuration = Duration.zero,
   });
 }
 
@@ -67,19 +72,15 @@ class RecordingService {
   /// 录音开始时间（用于计算录音时长）
   DateTime? _recordingStartedAt;
 
-  /// 防重入标志：startRecording 正在执行中。
-  bool _isStarting = false;
+  Future<String>? _startOperation;
+  bool _cancelRequested = false;
+  bool _disposed = false;
+  Future<void>? _disposeOperation;
 
   /// 学习事件记录器（外部设置，用于记录说的时长）
   ///
   /// Provider 进入学习模式时注入、退出时置 null。
   StudyEventRecorder? recorder;
-
-  /// 录音正常停止后的统计回调。
-  ///
-  /// 回调接收停止时计算出的有效录音时长；取消录音不会触发回调。
-  /// 新学习统计链路通过此回调接收输出时长，避免业务层重复计算录音时长。
-  void Function(Duration duration)? onRecordingCompleted;
 
   RecordingService(this._backend);
 
@@ -150,6 +151,12 @@ class RecordingService {
     required String promptId,
     bool recognitionEnabled = false,
   }) async {
+    if (_disposed) {
+      throw const SpeechPracticePlatformException(
+        'disposed',
+        'Recording service has been disposed.',
+      );
+    }
     if (!_backend.isSupported) {
       throw const SpeechPracticePlatformException(
         'notAvailable',
@@ -158,9 +165,35 @@ class RecordingService {
     }
 
     // 防重入：快速连点时避免多次 warmup + startSession
-    if (_isStarting) return _currentFilePath!;
-    _isStarting = true;
+    final inFlight = _startOperation;
+    if (inFlight != null) return inFlight;
+    if (_recordingPromptId != null) {
+      final currentFilePath = _currentFilePath;
+      if (currentFilePath == null) {
+        throw const SpeechPracticePlatformException(
+          'invalidState',
+          'Recording is active without a file.',
+        );
+      }
+      return currentFilePath;
+    }
+    _cancelRequested = false;
+    final operation = _startRecording(
+      promptId: promptId,
+      recognitionEnabled: recognitionEnabled,
+    );
+    _startOperation = operation;
+    try {
+      return await operation;
+    } finally {
+      if (identical(_startOperation, operation)) _startOperation = null;
+    }
+  }
 
+  Future<String> _startRecording({
+    required String promptId,
+    required bool recognitionEnabled,
+  }) async {
     try {
       // 权限检查（必须在 warmup 之前，否则 iOS/macOS 原生 warmup
       // 会把 notDetermined 当作 denied 直接返回错误）。
@@ -181,12 +214,20 @@ class RecordingService {
 
       // warmup 引擎
       await _backend.warmup();
+      _throwIfCancelled();
 
       // 订阅事件流
       _eventSub ??= _backend.events.listen(_handleEvent);
 
       // 开始录音
       final filePath = await _backend.startSession(promptId: promptId);
+      if (_cancelRequested || _disposed) {
+        await _cancelBackendSession(filePath);
+        throw const SpeechPracticePlatformException(
+          'cancelled',
+          'Recording was cancelled before it started.',
+        );
+      }
       _recordingPromptId = promptId;
       _currentFilePath = filePath;
       _recordingStartedAt = DateTime.now();
@@ -195,8 +236,27 @@ class RecordingService {
     } catch (e) {
       await _backend.shutdown();
       rethrow;
+    }
+  }
+
+  void _throwIfCancelled() {
+    if (_cancelRequested || _disposed) {
+      throw const SpeechPracticePlatformException(
+        'cancelled',
+        'Recording was cancelled.',
+      );
+    }
+  }
+
+  Future<void> _cancelBackendSession(String filePath) async {
+    try {
+      await _backend.cancelSession();
+      if (filePath.isNotEmpty) await deleteRecording(filePath);
     } finally {
-      _isStarting = false;
+      _recordingPromptId = null;
+      _currentFilePath = null;
+      _recordingStartedAt = null;
+      await _shutdown();
     }
   }
 
@@ -232,16 +292,27 @@ class RecordingService {
         (startedAt == null
             ? 0
             : DateTime.now().difference(startedAt).inMilliseconds);
-    if (durationMs > 0) {
-      recorder?.onRecordingCompleted(durationMs);
-      onRecordingCompleted?.call(Duration(milliseconds: durationMs));
-    }
-
     _finalEventPromptId = promptId;
     _finalEventCompleter = Completer<SpeechPracticeEvent>();
 
     AppLogger.log('Recording', '│ backend.stopSession() ...');
-    final stopResult = await _backend.stopSession();
+    late final SpeechPracticeStopResult stopResult;
+    try {
+      stopResult = await _backend.stopSession();
+    } on Object catch (error, stackTrace) {
+      _recordingPromptId = null;
+      _recordingStartedAt = null;
+      _clearFinalCompleter();
+      await _shutdown();
+      AppLogger.log(
+        'Recording',
+        '└ stopSession failed error=$error\n$stackTrace',
+      );
+      return RecordingResult(
+        errorCode: 'stopFailed',
+        errorMessage: error.toString(),
+      );
+    }
     final filePath = stopResult.filePath ?? _currentFilePath;
     _recordingPromptId = null;
     _recordingStartedAt = null;
@@ -250,7 +321,12 @@ class RecordingService {
       '└ stopSession done filePath=${filePath ?? '(null)'}',
     );
 
-    return RecordingResult(filePath: filePath);
+    final recordedDuration = Duration(milliseconds: math.max(0, durationMs));
+    if (durationMs > 0) recorder?.onRecordingCompleted(durationMs);
+    return RecordingResult(
+      filePath: filePath,
+      recordedDuration: recordedDuration,
+    );
   }
 
   /// 等待转录结果并释放引擎。
@@ -266,9 +342,15 @@ class RecordingService {
         'Recording',
         '┌ waitForTranscript timeout=${effectiveTimeout.inSeconds}s ...',
       );
-      final event = await _finalEventCompleter!.future.timeout(
-        effectiveTimeout,
-      );
+      final completer = _finalEventCompleter;
+      if (completer == null) {
+        return RecordingResult(
+          filePath: filePath,
+          errorCode: 'invalidState',
+          errorMessage: 'Transcript wait was not started.',
+        );
+      }
+      final event = await completer.future.timeout(effectiveTimeout);
       _clearFinalCompleter();
       await _shutdown();
 
@@ -342,13 +424,26 @@ class RecordingService {
   ///
   /// 取消的录音不计入说的时长。
   Future<void> cancelRecording() async {
+    _cancelRequested = true;
+    final startOperation = _startOperation;
+    if (startOperation != null) {
+      try {
+        await startOperation;
+      } on Object {
+        // 启动取消属于正常收尾路径，真正的启动错误由启动调用方处理。
+      }
+    }
     final promptId = _recordingPromptId;
-    if (promptId == null) return;
+    if (promptId == null) {
+      _completeTranscriptWaitAsCancelled();
+      await _shutdown();
+      return;
+    }
 
     _recordingPromptId = null;
     _recordingStartedAt = null;
 
-    _clearFinalCompleter();
+    _completeTranscriptWaitAsCancelled();
 
     try {
       await _backend.cancelSession();
@@ -377,13 +472,27 @@ class RecordingService {
 
   /// 释放资源。
   Future<void> dispose() async {
+    if (_disposed && _disposeOperation == null) return;
+    final inFlightDispose = _disposeOperation;
+    if (inFlightDispose != null) return inFlightDispose;
+    _disposed = true;
+    _cancelRequested = true;
+    final operation = _disposeResources();
+    _disposeOperation = operation;
+    try {
+      await operation;
+    } finally {
+      if (identical(_disposeOperation, operation)) _disposeOperation = null;
+    }
+  }
+
+  Future<void> _disposeResources() async {
+    await cancelRecording();
     await _eventSub?.cancel();
     _eventSub = null;
-    _clearFinalCompleter();
+    _completeTranscriptWaitAsCancelled();
     await _eventController.close();
-    if (_backend.isSupported) {
-      await _backend.shutdown();
-    }
+    if (_backend.isSupported) await _backend.shutdown();
   }
 
   /// 关闭引擎并取消事件订阅（公开方法，ASR 关闭时直接释放资源）。
@@ -403,6 +512,21 @@ class RecordingService {
   void _clearFinalCompleter() {
     _finalEventCompleter = null;
     _finalEventPromptId = null;
+  }
+
+  void _completeTranscriptWaitAsCancelled() {
+    final completer = _finalEventCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(
+        SpeechPracticeEvent(
+          type: SpeechPracticeEventType.error,
+          promptId: _finalEventPromptId ?? '',
+          errorCode: 'cancelled',
+          errorMessage: 'Recording was cancelled.',
+        ),
+      );
+    }
+    _clearFinalCompleter();
   }
 
   void _handleEvent(SpeechPracticeEvent event) {

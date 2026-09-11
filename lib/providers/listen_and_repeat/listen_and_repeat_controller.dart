@@ -528,6 +528,12 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
   /// 标记跟读页面仍有用户活动，使页面级学习计时器恢复计时。
   void markStudyActivity() => _studySessionTimer?.markActivity();
 
+  /// 暂停完成弹窗期间的页面计时，不影响跟读流程状态。
+  void pauseStudySession() => _studySessionTimer?.pause();
+
+  /// 恢复完成弹窗取消后的页面计时。
+  void resumeStudySession() => _studySessionTimer?.resume();
+
   /// 当前跟读页面累计的有效学习时长，供结束埋点复用。
   Duration get elapsed => _studySessionTimer?.elapsed ?? Duration.zero;
 
@@ -945,8 +951,10 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
   }
 
   /// 清除录音数据
-  void _clearRecording() {
-    ref.read(speechRecordingControllerProvider.notifier).clearRecording();
+  Future<void> _clearRecording() {
+    return ref
+        .read(speechRecordingControllerProvider.notifier)
+        .clearRecording();
   }
 
   /// 设置录音最大时长

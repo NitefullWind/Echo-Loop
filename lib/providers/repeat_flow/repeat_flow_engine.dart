@@ -101,8 +101,8 @@ class RepeatFlowCallbacks {
   /// 停止录音并评估
   final Future<void> Function({required String referenceText}) stopAndEvaluate;
 
-  /// 清除录音数据（切句/重播时调用）
-  final void Function() clearRecording;
+  /// 清除录音数据（切句/重播时调用），返回值用于等待麦克风真正释放。
+  final FutureOr<void> Function() clearRecording;
 
   /// 设置录音最大时长
   final void Function(Duration duration) setMaxRecordingDuration;
@@ -242,6 +242,7 @@ class RepeatFlowEngine {
 
     if (phase is WaitingInterval) {
       _userTookOverCurrentSentence = true;
+      _state = _state.copyWith(flowToken: _state.flowToken + 1);
     }
 
     _stopActiveResources();
@@ -431,15 +432,17 @@ class RepeatFlowEngine {
   /// 用户主动按"再来一遍"，`repeatIndex` 同步 +1（不封顶，允许 4/3 这种 overshoot 显示）。
   Future<void> replayCurrentSentence() async {
     _waitAfterCurrentPrompt = false;
-    _stopActiveResources();
-    callbacks.clearRecording();
+    _atomicReset();
+    final flowToken = _state.flowToken;
+    await callbacks.clearRecording();
+    if (flowToken != _state.flowToken) return;
     _updateState(
       _state.copyWith(
         repeatIndex: _state.repeatIndex + 1,
         recordingPath: null,
         recordingScore: null,
         isReviewPlaybackActive: false,
-        flowToken: _state.flowToken + 1,
+        flowToken: flowToken,
       ),
     );
     await _playCurrentSentence();
@@ -455,7 +458,9 @@ class RepeatFlowEngine {
 
     _waitAfterCurrentPrompt = false;
     _atomicReset();
-    callbacks.clearRecording();
+    final flowToken = _state.flowToken;
+    await callbacks.clearRecording();
+    if (flowToken != _state.flowToken) return;
 
     final nextPhase = autoplay
         ? const Idle()
@@ -470,7 +475,7 @@ class RepeatFlowEngine {
         recordingPath: null,
         recordingScore: null,
         isReviewPlaybackActive: false,
-        flowToken: _state.flowToken + 1,
+        flowToken: flowToken,
       ),
     );
 
@@ -522,7 +527,7 @@ class RepeatFlowEngine {
           isReviewPlaybackActive: false,
         ),
       );
-      callbacks.clearRecording();
+      unawaited(Future<void>.sync(callbacks.clearRecording));
       return;
     }
 
@@ -581,7 +586,7 @@ class RepeatFlowEngine {
     if (sentence == null) return;
 
     if (sentence.duration <= Duration.zero) {
-      _advanceToNextRepeatOrSentence();
+      unawaited(_advanceToNextRepeatOrSentence());
       return;
     }
 
@@ -732,32 +737,38 @@ class RepeatFlowEngine {
 
   void _onIntervalFinished() {
     if (_state.phase is! WaitingInterval) return;
-    _advanceToNextRepeatOrSentence();
+    unawaited(_advanceToNextRepeatOrSentence());
   }
 
   /// 推进到下一遍或下一句
-  void _advanceToNextRepeatOrSentence() {
+  Future<void> _advanceToNextRepeatOrSentence() async {
     if (_state.isLastRepeat) {
       if (_state.isLastSentence) {
         AppLogger.log(logTag, '全部完成');
         _updateState(_state.copyWith(phase: const SessionCompleted()));
       } else {
         AppLogger.log(logTag, '当前句完成 → 下一句');
-        _jumpToSentence(_state.sentenceIndex + 1);
+        await _jumpToSentence(_state.sentenceIndex + 1);
       }
     } else {
       final nextRepeat = _state.repeatIndex + 1;
+      final flowToken = _state.flowToken + 1;
+      _state = _state.copyWith(flowToken: flowToken);
       AppLogger.log(logTag, '下一遍: ${nextRepeat + 1}/${_state.totalRepeats}');
-      callbacks.clearRecording();
+      await callbacks.clearRecording();
+      if (flowToken != _state.flowToken || _state.phase is! WaitingInterval) {
+        return;
+      }
       _updateState(
         _state.copyWith(
           repeatIndex: nextRepeat,
           recordingPath: null,
           recordingScore: null,
           isReviewPlaybackActive: false,
+          flowToken: flowToken,
         ),
       );
-      _playCurrentSentence();
+      await _playCurrentSentence();
     }
   }
 
@@ -766,7 +777,9 @@ class RepeatFlowEngine {
     _waitAfterCurrentPrompt = false;
     _userTookOverCurrentSentence = false;
     _atomicReset();
-    callbacks.clearRecording();
+    final flowToken = _state.flowToken;
+    await callbacks.clearRecording();
+    if (flowToken != _state.flowToken) return;
 
     final sentence = _sentences[index];
     _updateState(
@@ -779,7 +792,7 @@ class RepeatFlowEngine {
         recordingPath: null,
         recordingScore: null,
         isReviewPlaybackActive: false,
-        flowToken: _state.flowToken + 1,
+        flowToken: flowToken,
       ),
     );
 

@@ -64,6 +64,7 @@ final class StudySessionTimer {
   int _persistedInputMilliseconds = 0;
   bool _started = false;
   bool _stopped = false;
+  bool _manuallyPaused = false;
 
   /// 页面会话仍处于活跃窗口内。
   bool _studyActive = false;
@@ -91,7 +92,10 @@ final class StudySessionTimer {
 
   /// 标记一次用户活动，并在 idle 后自动恢复总学习时长。
   void markActivity() {
-    if (!_started || _stopped || !_activityGate.isForeground) {
+    if (!_started ||
+        _stopped ||
+        _manuallyPaused ||
+        !_activityGate.isForeground) {
       return;
     }
     final resumesFromIdle = !_studyActive;
@@ -113,7 +117,7 @@ final class StudySessionTimer {
   void setPlaybackActive(bool active) {
     if (!_started || _stopped) return;
     _playbackActive = active;
-    if (active) {
+    if (active && !_manuallyPaused) {
       _studyActive = true;
       _startTiming();
       return;
@@ -128,6 +132,29 @@ final class StudySessionTimer {
     }
     // 播放结束本身是一次学习会话事件，为用户继续思考保留 idle 窗口。
     markActivity();
+  }
+
+  /// 暂停页面学习计时；完成弹窗等暂时不属于有效学习的 UI 状态应使用此方法。
+  ///
+  /// 这是可恢复暂停，不会推进持久化游标，也不会结束当前会话。
+  void pause() {
+    if (!_started || _stopped || _manuallyPaused) return;
+    _manuallyPaused = true;
+    _studyActive = false;
+    _playbackActive = false;
+    _stopTiming();
+    unawaited(_flushFromActivityChange());
+    AppLogger.log(_logScope, 'session.pause stage=${_stage.name}');
+  }
+
+  /// 恢复可恢复暂停的页面学习计时。
+  void resume() {
+    if (!_started || _stopped || !_manuallyPaused) return;
+    _manuallyPaused = false;
+    if (!_activityGate.isForeground) return;
+    _studyActive = true;
+    _startTiming();
+    AppLogger.log(_logScope, 'session.resumeFromPause stage=${_stage.name}');
   }
 
   /// 只落库尚未持久化的有效时长；同一时刻的调用共享一个操作。
@@ -180,6 +207,7 @@ final class StudySessionTimer {
       return;
     }
     _stopped = true;
+    _manuallyPaused = false;
     _studyActive = false;
     _playbackActive = false;
     _stopTiming();
@@ -237,7 +265,7 @@ final class StudySessionTimer {
   }
 
   void _onActivityChanged(bool isForeground) {
-    if (!_started || _stopped) return;
+    if (!_started || _stopped || _manuallyPaused) return;
     if (isForeground) {
       if (_studyActive || _playbackActive) _startTiming();
       AppLogger.log(_logScope, 'session.resume stage=${_stage.name}');

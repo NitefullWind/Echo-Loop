@@ -319,6 +319,7 @@ class _ListenAndRepeatPlayerScreenState
 
     final ctrl = ref.read(listenAndRepeatControllerProvider.notifier);
     final ctrlState = ref.read(listenAndRepeatControllerProvider);
+    ctrl.pauseStudySession();
 
     if (!mounted) return;
 
@@ -340,6 +341,7 @@ class _ListenAndRepeatPlayerScreenState
           ),
         ],
         onStudyAgain: () async {
+          ctrl.resumeStudySession();
           // 重新开始（从第一句，复用当前 config）
           await ctrl.prepareSession(
             sentences: ctrl.sentences,
@@ -385,6 +387,7 @@ class _ListenAndRepeatPlayerScreenState
     );
 
     if (!mounted || result == null) {
+      ctrl.resumeStudySession();
       _isShowingDialog = false;
       return;
     }
@@ -469,7 +472,6 @@ class _ListenAndRepeatPlayerScreenState
     final state = ref.read(listenAndRepeatControllerProvider);
     final ctrl = ref.read(listenAndRepeatControllerProvider.notifier);
     if (state.isInPause) {
-      ref.read(speechRecordingControllerProvider.notifier).clearRecording();
       unawaited(ctrl.replayCurrentSentence());
     } else if (state.phase is PlayingPrompt) {
       ctrl.enterWaitingForUser();
@@ -552,9 +554,6 @@ class _ListenAndRepeatPlayerScreenState
                     listenAndRepeatControllerProvider.notifier,
                   );
                   if (state.isInPause) {
-                    ref
-                        .read(speechRecordingControllerProvider.notifier)
-                        .clearRecording();
                     unawaited(controller.replayCurrentSentence());
                   } else if (state.phase is PlayingPrompt) {
                     controller.enterWaitingForUserAfterCurrentPrompt();
