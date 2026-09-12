@@ -115,8 +115,7 @@ class _MediaPlaybackScreenState extends ConsumerState<MediaPlaybackScreen>
     unawaited(_fullscreenSubscription.cancel());
     unawaited(_releaseFullscreen());
     _playlistViewController.dispose();
-    // 正常退出由 GoRoute.onExit 等待；这里保留同一收尾入口作为兜底，
-    // 防止路由被外部直接移除时媒体资源继续工作或丢失最终统计。
+    // 页面销毁时在后台启动幂等收尾，防止媒体资源继续工作或丢失最终统计。
     unawaited(_controller.finishStudyPage(generation: _studyPageGeneration));
     scheduleMicrotask(_sleepTimer.cancel);
     super.dispose();

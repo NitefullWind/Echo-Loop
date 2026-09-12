@@ -30,6 +30,8 @@ import '../providers/notification_permission_provider.dart';
 import '../providers/reminder_settings_provider.dart';
 import '../providers/review_reminder_provider.dart';
 import '../providers/startup_bootstrap_provider.dart';
+import '../providers/listening_practice/listening_practice_provider.dart';
+import '../providers/media_playback/media_playback_provider.dart';
 import '../providers/study_stats_provider.dart';
 import '../providers/study_duration_provider.dart';
 import '../providers/study_task_provider.dart';
@@ -104,8 +106,44 @@ class _MainShellState extends ConsumerState<MainShell> with RouteAware {
     );
     setState(() => _rootRouteVisible = true);
     if (widget.navigationShell.currentIndex == 1) {
-      unawaited(_refreshStudyData(source: 'root-route-resume'));
+      unawaited(_finishFreePlayerSessionsThenRefreshStudyData());
     }
+  }
+
+  /// 返回 Study 前等待随心听页面完成后台收尾，再刷新统计数据。
+  ///
+  /// 播放器路由不能使用异步 [GoRoute.onExit]，否则 iOS 交互式返回手势会被
+  /// Navigator 判定为取消。页面销毁会启动同一幂等收尾，这里只负责在返回后
+  /// 等待已有 Future，确保 Study 首次刷新不会读到旧统计。
+  Future<void> _finishFreePlayerSessionsThenRefreshStudyData() async {
+    final finishers = <({String name, Future<void> Function() finish})>[
+      (
+        name: 'audio',
+        finish: () =>
+            ref.read(listeningPracticeProvider.notifier).finishStudyPage(),
+      ),
+      (
+        name: 'media',
+        finish: () =>
+            ref.read(mediaPlaybackProvider.notifier).finishStudyPage(),
+      ),
+    ];
+
+    for (final finisher in finishers) {
+      if (!mounted) return;
+      try {
+        await finisher.finish();
+      } catch (error, stackTrace) {
+        AppLogger.log(
+          'StudyExit',
+          '${finisher.name} finish before Study refresh failed: '
+              '$error\n$stackTrace',
+        );
+      }
+    }
+
+    if (!mounted) return;
+    await _refreshStudyData(source: 'root-route-resume');
   }
 
   /// 预热学习页首屏所需数据：音频列表 + 学习进度。
