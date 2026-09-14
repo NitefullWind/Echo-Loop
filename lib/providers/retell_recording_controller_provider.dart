@@ -31,7 +31,6 @@ import '../services/recording_service.dart';
 import '../services/speech_completion_detector.dart';
 import '../services/speech_practice_matcher.dart';
 import '../services/speech_practice_platform.dart';
-import '../services/study_event_recorder.dart';
 import 'offline_asr_settings_provider.dart';
 import 'learning_settings_provider.dart';
 import '../services/text_embedding_platform.dart';
@@ -149,6 +148,7 @@ final retellRecordingControllerProvider =
 class RetellRecordingController extends Notifier<RetellRecordingState> {
   // ── 服务 ──
   late RecordingService _recordingService;
+  void Function(Duration duration)? _recordingCompletionHandler;
   StreamSubscription<SpeechPracticeEvent>? _eventSub;
 
   // ── 计时器 ──
@@ -197,6 +197,7 @@ class RetellRecordingController extends Notifier<RetellRecordingState> {
       lifecycleListener.dispose();
       _cancelAllTimers();
       _eventSub?.cancel();
+      _recordingCompletionHandler = null;
       _recordingService.dispose();
     });
     return const RetellRecordingState();
@@ -204,11 +205,13 @@ class RetellRecordingController extends Notifier<RetellRecordingState> {
 
   // ========== 配置方法 ==========
 
-  /// 设置学习事件记录器（Provider 进入模式时注入，退出时传 null 清除）
+  /// 设置录音完成回调，供新学习统计链路接收有效输出时长。
   ///
-  /// 录音完成后自动通过 recorder 记录说的时长。
-  void setRecorder(StudyEventRecorder? recorder) {
-    _recordingService.recorder = recorder;
+  /// 回调只会在录音正常停止且有效时长大于零时触发；取消录音不会触发。
+  void setRecordingCompletionHandler(
+    void Function(Duration duration)? handler,
+  ) {
+    _recordingCompletionHandler = handler;
   }
 
   /// 设置手动控制模式
@@ -407,6 +410,7 @@ class RetellRecordingController extends Notifier<RetellRecordingState> {
     required String promptId,
     required String referenceText,
   }) async {
+    final recordingCompletionHandler = _recordingCompletionHandler;
     final backend = ref.read(speechPracticeBackendProvider);
     final retellRatingEnabled = ref
         .read(learningSettingsProvider)
@@ -446,6 +450,9 @@ class RetellRecordingController extends Notifier<RetellRecordingState> {
         silenceDuration: Duration.zero,
       );
       return;
+    }
+    if (stopResult.recordedDuration > Duration.zero) {
+      recordingCompletionHandler?.call(stopResult.recordedDuration);
     }
 
     // ── 不需要评级时：直接存录音，不进入转录/匹配/评分链路 ──

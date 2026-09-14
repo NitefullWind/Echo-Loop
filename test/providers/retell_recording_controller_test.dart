@@ -5,12 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:echo_loop/models/speech_practice_models.dart';
 import 'package:echo_loop/providers/learning_settings_provider.dart';
-import 'package:echo_loop/models/study_stage.dart';
 import 'package:echo_loop/providers/offline_asr_settings_provider.dart';
 import 'package:echo_loop/providers/retell_recording_controller_provider.dart';
 import 'package:echo_loop/services/speech_practice_platform.dart';
-import 'package:echo_loop/services/study_event_recorder.dart';
-import 'package:echo_loop/services/study_time_service.dart';
 
 import '../helpers/mock_providers.dart';
 
@@ -35,6 +32,7 @@ class _FakeSpeechPracticeBackend implements SpeechPracticeBackend {
   final _controller = StreamController<SpeechPracticeEvent>.broadcast();
   String? activePromptId;
   int counter = 0;
+  bool failStopSession = false;
 
   @override
   bool get isSupported => true;
@@ -81,6 +79,9 @@ class _FakeSpeechPracticeBackend implements SpeechPracticeBackend {
 
   @override
   Future<SpeechPracticeStopResult> stopSession() async {
+    if (failStopSession) {
+      throw StateError('stop failed');
+    }
     final promptId = activePromptId ?? 'retell:a1:0';
     scheduleMicrotask(() {
       _controller.add(
@@ -134,26 +135,6 @@ class _FakeSpeechPracticeBackend implements SpeechPracticeBackend {
   }
 }
 
-class _DummyStudyTimeService implements StudyTimeService {
-  @override
-  dynamic noSuchMethod(Invocation invocation) => null;
-}
-
-class _RecordingStudyEventRecorder extends StudyEventRecorder {
-  _RecordingStudyEventRecorder()
-    : super(
-        studyTimeService: _DummyStudyTimeService(),
-        stage: StudyStage.retell,
-      );
-
-  final List<int> recordedDurations = [];
-
-  @override
-  void onRecordingCompleted(int durationMs) {
-    recordedDurations.add(durationMs);
-  }
-}
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -169,7 +150,7 @@ void main() {
     container.dispose();
   }
 
-  test('RetellRecordingController 在停止录音后通过底层统一记录说的时长', () async {
+  test('RetellRecordingController 在停止录音后触发有效录音时长回调', () async {
     final backend = _FakeSpeechPracticeBackend();
     final container = ProviderContainer(
       overrides: [
@@ -194,8 +175,10 @@ void main() {
         backend: backend,
       ),
     );
-    final recorder = _RecordingStudyEventRecorder();
-    controller.setRecorder(recorder);
+    Duration? recordedDuration;
+    controller.setRecordingCompletionHandler((duration) {
+      recordedDuration = duration;
+    });
 
     await controller.startRecording(
       promptId: 'retell:a1:0',
@@ -211,8 +194,11 @@ void main() {
       referenceText: 'ask your professor today for authorization again',
     );
 
-    expect(recorder.recordedDurations, hasLength(1));
-    expect(recorder.recordedDurations.single, greaterThanOrEqualTo(900));
+    expect(recordedDuration, isNotNull);
+    expect(
+      recordedDuration,
+      greaterThanOrEqualTo(const Duration(milliseconds: 900)),
+    );
   });
 
   test('RetellRecordingController 关闭复述评级时只保留录音并跳过转录评分', () async {
@@ -260,5 +246,83 @@ void main() {
     expect(attempt.finalTranscript, isNull);
     expect(attempt.transcriptSegments, isEmpty);
     expect(attempt.referenceSegments, isEmpty);
+  });
+
+  test('RetellRecordingController 取消录音不触发统计回调', () async {
+    final backend = _FakeSpeechPracticeBackend();
+    final container = ProviderContainer(
+      overrides: [
+        analyticsOverride(),
+        initialLearningSettingsProvider.overrideWithValue(
+          const LearningSettings(),
+        ),
+        speechPracticeBackendProvider.overrideWithValue(backend),
+        recommendedAsrModelProvider.overrideWithValue(_testAsrModel),
+        offlineAsrSettingsProvider.overrideWith(
+          () => _FakeOfflineAsrSettingsNotifier(),
+        ),
+      ],
+    );
+    final controller = container.read(
+      retellRecordingControllerProvider.notifier,
+    );
+    addTearDown(
+      () => disposeTestResources(
+        controller: controller,
+        container: container,
+        backend: backend,
+      ),
+    );
+    Duration? recordedDuration;
+    controller.setRecordingCompletionHandler((duration) {
+      recordedDuration = duration;
+    });
+
+    await controller.startRecording(
+      promptId: 'retell:a1:0',
+      referenceText: 'ask your professor today',
+    );
+    await controller.cancelActiveRecording();
+
+    expect(recordedDuration, isNull);
+  });
+
+  test('RetellRecordingController 停止录音失败不触发统计回调', () async {
+    final backend = _FakeSpeechPracticeBackend()..failStopSession = true;
+    final container = ProviderContainer(
+      overrides: [
+        analyticsOverride(),
+        initialLearningSettingsProvider.overrideWithValue(
+          const LearningSettings(),
+        ),
+        speechPracticeBackendProvider.overrideWithValue(backend),
+        recommendedAsrModelProvider.overrideWithValue(_testAsrModel),
+        offlineAsrSettingsProvider.overrideWith(
+          () => _FakeOfflineAsrSettingsNotifier(),
+        ),
+      ],
+    );
+    final controller = container.read(
+      retellRecordingControllerProvider.notifier,
+    );
+    addTearDown(
+      () => disposeTestResources(
+        controller: controller,
+        container: container,
+        backend: backend,
+      ),
+    );
+    Duration? recordedDuration;
+    controller.setRecordingCompletionHandler((duration) {
+      recordedDuration = duration;
+    });
+
+    await controller.startRecording(
+      promptId: 'retell:a1:0',
+      referenceText: 'ask your professor today',
+    );
+    await controller.stopAndEvaluate(referenceText: 'ask your professor today');
+
+    expect(recordedDuration, isNull);
   });
 }

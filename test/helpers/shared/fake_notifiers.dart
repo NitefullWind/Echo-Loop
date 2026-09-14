@@ -1520,13 +1520,13 @@ class FakeRetellPlayer extends RetellPlayer {
   }
 
   @override
-  void initialize(
+  Future<void> initialize(
     List<List<Sentence>> paragraphs, {
     int? startSentenceIndex,
     RetellSettings settings = const RetellSettings(),
     String? settingsSlot,
     ParagraphPlaybackDriver? playbackDriver,
-  }) {
+  }) async {
     lastPlaybackDriver = playbackDriver;
     testParagraphs = paragraphs;
     testKeywords = const {};
@@ -1709,7 +1709,7 @@ class FakeRetellPlayer extends RetellPlayer {
   }
 
   @override
-  void disposePlayer() {
+  Future<void> disposePlayer() async {
     testParagraphs = [];
     testKeywords = {};
     state = const RetellPlayerState();

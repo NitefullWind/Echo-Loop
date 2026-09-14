@@ -23,15 +23,14 @@ import '../../models/sentence.dart';
 import '../../models/sentence_playback_result.dart';
 import '../../models/study_stage.dart';
 import '../../services/app_logger.dart';
-import '../../services/learned_vocabulary_tracker.dart';
 import '../../services/silence_skip_detector.dart';
-import '../../services/study_event_recorder.dart';
+import '../../services/study_session_timer.dart';
+import '../../services/study_time_service.dart';
 import '../../utils/keyword_extraction.dart';
 import '../../utils/word_counter.dart';
 import '../audio_engine/foreground_audio_engine_provider.dart';
 import '../listening_practice/bookmark_manager.dart';
 import '../favorite_sentence_lifecycle_provider.dart';
-import '../learned_vocabulary_tracker_provider.dart';
 import '../learning_settings_provider.dart';
 import '../notification_permission_provider.dart';
 import '../retell_recording_controller_provider.dart';
@@ -192,8 +191,17 @@ class RetellPlayer extends _$RetellPlayer {
   /// 关键词映射：段落内句子索引 → 词索引集合
   Map<int, Set<int>> _keywordsMap = {};
 
-  /// 学习事件记录器
-  late StudyEventRecorder _recorder;
+  /// 当前复述页面的学习统计服务。
+  late StudyTimeService _studyTimeService;
+
+  /// 当前复述页面级学习计时器。
+  StudySessionTimer? _studySessionTimer;
+
+  /// 幂等退出收尾，避免路由退出和 Provider 销毁重复刷写统计。
+  Future<void>? _disposePlayerInFlight;
+
+  /// 复述页面统计会话代际，防止旧录音回调污染新会话。
+  int _studySessionGeneration = 0;
 
   /// position 监听（用于句子高亮）
   StreamSubscription<Duration>? _positionSub;
@@ -203,6 +211,9 @@ class RetellPlayer extends _$RetellPlayer {
 
   /// 当前 AudioEngine sessionId
   int _sessionId = -1;
+
+  /// 当前播放 session 下一条待统计的段内句子索引。
+  int _nextStatsSentenceLocalIndex = 0;
 
   /// 当前复述会话的段落播放驱动；音频默认使用独立前台引擎，视频由入口注入。
   ParagraphPlaybackDriver? _playbackDriver;
@@ -232,16 +243,9 @@ class RetellPlayer extends _$RetellPlayer {
 
   @override
   RetellPlayerState build() {
-    LearnedVocabularyTracker? vocabTracker;
-    try {
-      vocabTracker = ref.read(learnedVocabularyTrackerProvider);
-    } catch (e) {
-      AppLogger.log('Player', '⚠ vocabTracker 不可用（测试环境？）: $e');
-    }
-    _recorder = StudyEventRecorder(
-      studyTimeService: ref.read(studyTimeServiceProvider),
-      vocabTracker: vocabTracker,
-      stage: StudyStage.retell,
+    _studyTimeService = ref.read(studyTimeServiceProvider);
+    final recordingController = ref.read(
+      retellRecordingControllerProvider.notifier,
     );
 
     final lifecycleListener = AppLifecycleListener(
@@ -252,6 +256,8 @@ class RetellPlayer extends _$RetellPlayer {
       _positionSub?.cancel();
       _invalidateRetellCountdown();
       _silenceSkipEvents.close();
+      recordingController.setRecordingCompletionHandler(null);
+      unawaited(_disposeStudySessionOnProviderDispose());
     });
 
     // 监听录音评估完成，上报 recording_complete 事件
@@ -322,13 +328,20 @@ class RetellPlayer extends _$RetellPlayer {
   /// [autoRatio] 按音频难度映射出的可见词比例档位；为 null 时使用 [RetellSettings] 默认值
   ///
   /// 关键词由内部根据 [autoRatio] 或当前 settings 自动生成，无需外部传入。
-  void initialize(
+  Future<void> initialize(
     List<List<Sentence>> paragraphs, {
     int? startSentenceIndex,
     RetellSettings settings = const RetellSettings(),
     String? settingsSlot,
     ParagraphPlaybackDriver? playbackDriver,
-  }) {
+  }) async {
+    if (_playbackDriver != null) {
+      await _cancelAll();
+    }
+    await _disposeStudySessionTimer();
+    await _flushStudyStatistics();
+    _studySessionGeneration += 1;
+    final studySessionGeneration = _studySessionGeneration;
     _settingsSlot = settingsSlot;
     _cleanup();
     _playbackDriver =
@@ -374,8 +387,23 @@ class RetellPlayer extends _$RetellPlayer {
       EventParams.totalParagraphs: paragraphs.length,
     });
 
-    // 注入 recorder 到录音控制器
-    ref.read(retellRecordingControllerProvider.notifier).setRecorder(_recorder);
+    final timer = StudySessionTimer(
+      studyTimeService: _studyTimeService,
+      stage: StudyStage.retell,
+      activityGate: ref.read(studyActivityGateProvider),
+      idleTimeout: const Duration(minutes: 2),
+      logScope: 'RetellTimer',
+    );
+    _studySessionTimer = timer;
+    timer.start();
+
+    // 录音完成时写入本次复述会话的输出时长。
+    ref
+        .read(retellRecordingControllerProvider.notifier)
+        .setRecordingCompletionHandler(
+          (duration) =>
+              _recordSpeechRecognition(duration, studySessionGeneration),
+        );
 
     // 从句子的 isBookmarked 字段初始化收藏状态
     final preBookmarked = <int>{
@@ -533,9 +561,17 @@ class RetellPlayer extends _$RetellPlayer {
 
   /// 记录段落输出词数。
   void _recordParagraphOutputStats() {
-    final session = ref.read(learningSessionProvider.notifier);
     final paragraphWordCount = countWordsInSentences(currentParagraphSentences);
-    session.addOutputWords(paragraphWordCount);
+    AppLogger.log(
+      'RetellStats',
+      'outputWords.submit stage=${StudyStage.retell.name} '
+          'paragraph=${state.currentParagraphIndex} '
+          'repeat=${state.currentRepeatCount} count=$paragraphWordCount',
+    );
+    _studyTimeService.submitOutputWords(
+      paragraphWordCount,
+      stage: StudyStage.retell,
+    );
   }
 
   /// 异步保存复述断点（当前播放句子的全局 index），不阻塞播放流程。
@@ -925,15 +961,121 @@ class RetellPlayer extends _$RetellPlayer {
     );
   }
 
-  /// 释放资源
-  void disposePlayer() {
-    ref.read(retellRecordingControllerProvider.notifier).setRecorder(null);
+  /// 标记复述页面仍有用户活动，使页面级学习计时器恢复计时。
+  void markStudyActivity() => _studySessionTimer?.markActivity();
+
+  /// 暂停完成弹窗期间的页面学习计时。
+  void pauseStudySession() => _studySessionTimer?.pause();
+
+  /// 恢复完成弹窗取消后的页面学习计时。
+  void resumeStudySession() => _studySessionTimer?.resume();
+
+  /// 当前复述页面累计的有效学习时长，供结束埋点使用。
+  Duration get elapsed => _studySessionTimer?.elapsed ?? Duration.zero;
+
+  /// 释放资源并刷写复述页面统计；重复调用共享同一次收尾操作。
+  Future<void> disposePlayer() {
+    final inFlight = _disposePlayerInFlight;
+    if (inFlight != null) return inFlight;
+
+    late final Future<void> tracked;
+    tracked = _disposePlayerInternal().whenComplete(() {
+      if (identical(_disposePlayerInFlight, tracked)) {
+        _disposePlayerInFlight = null;
+      }
+    });
+    _disposePlayerInFlight = tracked;
+    return tracked;
+  }
+
+  Future<void> _disposePlayerInternal() async {
+    _studySessionGeneration += 1;
+    AppLogger.log(
+      'RetellPlayer',
+      'disposePlayer: begin paragraphs=${_paragraphs.length} '
+          'session=$_sessionId',
+    );
+    try {
+      if (_playbackDriver != null) {
+        await _cancelAll();
+      }
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'retell playback cancellation failed error=$error\n$stackTrace',
+      );
+    }
+    ref
+        .read(retellRecordingControllerProvider.notifier)
+        .setRecordingCompletionHandler(null);
+
+    await _disposeStudySessionTimer();
+    await _flushStudyStatistics();
+
     _cleanup();
     _playbackDriver = null;
     _paragraphs = [];
     _allSentences = [];
     _keywordsMap = {};
     state = const RetellPlayerState(); // bookmarkedSentenceIndices 随之清空
+    AppLogger.log('RetellPlayer', 'disposePlayer: complete');
+  }
+
+  /// Provider 被动销毁时兜底刷写页面计时器和统计队列。
+  Future<void> _disposeStudySessionOnProviderDispose() async {
+    await _disposeStudySessionTimer();
+    await _flushStudyStatistics();
+  }
+
+  /// 释放页面级学习计时器，失败时不阻断播放器收尾。
+  Future<void> _disposeStudySessionTimer() async {
+    final timer = _studySessionTimer;
+    _studySessionTimer = null;
+    if (timer == null) return;
+    try {
+      await timer.dispose();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'retell timer cleanup failed error=$error\n$stackTrace',
+      );
+    }
+  }
+
+  /// 等待统计 FIFO 队列完成，确保播放和录音事件不因页面退出丢失。
+  Future<void> _flushStudyStatistics() async {
+    try {
+      await _studyTimeService.flush();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'retell statistics flush failed error=$error\n$stackTrace',
+      );
+    }
+  }
+
+  /// 记录有效复述录音的输出时长，并丢弃退出后的迟到回调。
+  void _recordSpeechRecognition(Duration duration, int sessionGeneration) {
+    if (sessionGeneration != _studySessionGeneration ||
+        _studySessionTimer == null) {
+      AppLogger.log(
+        'RetellStats',
+        'speechRecognition.discarded durationMs=${duration.inMilliseconds} '
+            'callbackGeneration=$sessionGeneration '
+            'currentGeneration=$_studySessionGeneration '
+            'hasTimer=${_studySessionTimer != null}',
+      );
+      return;
+    }
+    AppLogger.log(
+      'RetellStats',
+      'speechRecognition.submit stage=${StudyStage.retell.name} '
+          'durationMs=${duration.inMilliseconds} generation=$sessionGeneration',
+    );
+    _studyTimeService.submitSpeechRecognition(
+      duration: duration,
+      stage: StudyStage.retell,
+    );
   }
 
   // ========== 内部方法 ==========
@@ -976,6 +1118,7 @@ class RetellPlayer extends _$RetellPlayer {
     final playback = _playback;
     _sessionId = playback.newSession();
     final sid = _sessionId; // 捕获局部变量
+    _nextStatsSentenceLocalIndex = startLocalIdx;
 
     // override 模式下不重置 displayMode（同段 seek 保留用户视图）；其他模式按既有逻辑
     final RetellDisplayMode? nextDisplayMode = fromOverride
@@ -1002,7 +1145,7 @@ class RetellPlayer extends _$RetellPlayer {
       end,
       sid,
       speed: state.settings.playbackSpeed,
-      onRangeReady: () => _startPositionTracking(sentences),
+      onRangeReady: () => _startPositionTracking(sentences, sessionId: sid),
     );
 
     // 播放完成后进入复述阶段（用局部变量检查）
@@ -1014,16 +1157,21 @@ class RetellPlayer extends _$RetellPlayer {
       'playRange 返回: sessionActive=$sessionStillActive, '
           'sid=$sid, paragraph=${state.currentParagraphIndex}',
     );
-    if (!sessionStillActive) return;
+    if (!sessionStillActive) {
+      AppLogger.log(
+        'RetellStats',
+        'sentencePlayback.discarded result=${result.name} '
+            'paragraph=${state.currentParagraphIndex} session=$sid',
+      );
+      return;
+    }
 
-    // 通过 recorder 记录听力时长、输入词数、已学词形
-    final paragraphWordCount = countWordsInSentences(sentences);
-    final durationMs = (end - start).inMilliseconds;
-    final paragraphText = sentences.map((s) => s.text).join(' ');
-    _recorder.onInputCompleted(
-      durationMs: durationMs,
-      wordCount: paragraphWordCount,
-      text: paragraphText,
+    // 某些播放器不会在段尾再发一条可用 position；自然完成结果本身足以证明
+    // 剩余句子完整播放，因此在这里补齐未提交的句子。
+    _recordCompletedSentencesThrough(
+      sentences,
+      sentences.last.endTime,
+      sessionId: sid,
     );
 
     _positionSub?.cancel();
@@ -1048,14 +1196,55 @@ class RetellPlayer extends _$RetellPlayer {
     _enterRetellingPhase();
   }
 
-  /// 订阅 position stream，二分查找定位当前句子
-  void _startPositionTracking(List<Sentence> sentences) {
+  /// 记录当前播放 session 已经完整播放的句子。
+  ///
+  /// position 可能一次跨过多个句子，因此使用游标循环补记；调用方和本方法
+  /// 都校验 session，避免切段、seek 或退出后的迟到 position 污染统计。
+  void _recordCompletedSentencesThrough(
+    List<Sentence> sentences,
+    Duration position, {
+    required int sessionId,
+  }) {
+    if (sessionId != _sessionId || !_playback.isActiveSession(sessionId)) {
+      return;
+    }
+
+    while (_nextStatsSentenceLocalIndex < sentences.length) {
+      final sentence = sentences[_nextStatsSentenceLocalIndex];
+      if (position < sentence.endTime) break;
+
+      _studyTimeService.submitSentencePlayback(
+        duration: sentence.duration,
+        text: sentence.text,
+        stage: StudyStage.retell,
+      );
+      AppLogger.log(
+        'RetellStats',
+        'event=sentence_completed '
+            'stage=${StudyStage.retell.name} '
+            'paragraph=${state.currentParagraphIndex} '
+            'sentence=${sentence.index} '
+            'session=$sessionId '
+            'durationMs=${sentence.duration.inMilliseconds} '
+            'wordCount=${countWords(sentence.text)}',
+      );
+      _nextStatsSentenceLocalIndex += 1;
+    }
+  }
+
+  /// 订阅 position stream，逐句统计并定位当前句子。
+  void _startPositionTracking(
+    List<Sentence> sentences, {
+    required int sessionId,
+  }) {
     _positionSub?.cancel();
     _lastSkippedSilenceKey = null; // 新段落，清空去重指针
     final playback = _playback;
 
     _positionSub = playback.positionStream.listen((position) {
-      if (!playback.isActiveSession(_sessionId)) return;
+      if (sessionId != _sessionId || !playback.isActiveSession(sessionId)) {
+        return;
+      }
       if (state.phase != RetellPhase.listening) return;
       // 防御：clip 切换后仍可能残留一次旧 emission。落在本段范围外的 position
       // 一律丢弃，绝不改高亮、不写断点、不触发静音跳过。
@@ -1063,6 +1252,12 @@ class RetellPlayer extends _$RetellPlayer {
           position >= sentences.last.endTime) {
         return;
       }
+
+      _recordCompletedSentencesThrough(
+        sentences,
+        position,
+        sessionId: sessionId,
+      );
 
       final idx = _findSentenceIndex(sentences, position);
       if (idx != state.playingSentenceIndex && idx >= 0) {
@@ -1180,9 +1375,7 @@ class RetellPlayer extends _$RetellPlayer {
   /// 复述倒计时结束
   Future<void> _onRetellCountdownFinished() async {
     // 复述完成 = 输出词数
-    final session = ref.read(learningSessionProvider.notifier);
-    final paragraphWordCount = countWordsInSentences(currentParagraphSentences);
-    session.addOutputWords(paragraphWordCount);
+    _recordParagraphOutputStats();
 
     // 检查遍数（手动模式视为单遍）
     final effectiveRepeatCount = state.settings.isManualMode

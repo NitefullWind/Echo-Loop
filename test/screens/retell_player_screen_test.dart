@@ -41,6 +41,7 @@ import 'package:echo_loop/features/subscription/models/ai_quota_rejection.dart';
 import 'package:echo_loop/widgets/common/playback_controls.dart';
 import 'package:echo_loop/widgets/common/recording_button.dart';
 import 'package:echo_loop/widgets/common/masked_sentence_tile.dart';
+import 'package:echo_loop/widgets/study/study_activity_detector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../helpers/mock_providers.dart';
@@ -380,6 +381,13 @@ void main() {
         greaterThanOrEqualTo(sentenceCardBox.bottom - 1),
         reason: 'SegmentedButton 应位于句子列表卡片下方',
       );
+    });
+
+    testWidgets('页面接入学习统计活动检测器', (tester) async {
+      await tester.pumpWidget(createTestWidget());
+      await tester.pumpAndSettle();
+
+      expect(find.byType(StudyActivityDetector), findsOneWidget);
     });
 
     testWidgets('切换显示模式功能正常', (tester) async {

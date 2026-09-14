@@ -53,6 +53,7 @@ import '../widgets/common/paragraph_practice_scaffold.dart';
 import '../widgets/common/managed_media_visual_surface.dart';
 import '../widgets/common/practice_media_presentation_host.dart';
 import '../widgets/common/paragraph_sentence_list_card.dart';
+import '../widgets/study/study_activity_detector.dart';
 import '../widgets/guide_flow.dart';
 import '../widgets/common/paragraph_visibility_controls.dart';
 import '../widgets/retell/retell_settings_sheet.dart';
@@ -270,7 +271,6 @@ class _RetellPlayerScreenState extends ConsumerState<RetellPlayerScreen>
     _logRetellPlayerStateTransition(prev, next);
 
     if (!prev.stepFinished && next.stepFinished) {
-      ref.read(learningSessionProvider.notifier).pauseStudyTimer();
       shortenIdleTimeout(5);
       _handleCompleted();
     }
@@ -1133,6 +1133,8 @@ class _RetellPlayerScreenState extends ConsumerState<RetellPlayerScreen>
   Future<void> _handleCompleted() async {
     if (_isShowingDialog || _isExiting || !mounted) return;
     _isShowingDialog = true;
+    final player = ref.read(retellPlayerProvider.notifier);
+    player.pauseStudySession();
 
     final l10n = AppLocalizations.of(context)!;
     final sessionState = ref.read(learningSessionProvider);
@@ -1171,6 +1173,7 @@ class _RetellPlayerScreenState extends ConsumerState<RetellPlayerScreen>
         ],
         replayLabel: l10n.retellPracticeAgain,
         onStudyAgain: () async {
+          player.resumeStudySession();
           await ref
               .read(retellRecordingControllerProvider.notifier)
               .fullReset();
@@ -1222,7 +1225,8 @@ class _RetellPlayerScreenState extends ConsumerState<RetellPlayerScreen>
           .completeCurrentSubStage(widget.audioItemId);
       await _exit();
     } else {
-      // 关闭弹窗 → 留在页面，不做操作
+      // 关闭弹窗 → 留在页面，恢复页面级学习计时。
+      player.resumeStudySession();
     }
   }
 
@@ -1529,170 +1533,174 @@ class _RetellPlayerScreenState extends ConsumerState<RetellPlayerScreen>
     ];
 
     final mediaReady = widget.mediaStartup == null || _mediaStartupReady;
-    return wakelockBody(
-      child: PracticeMediaPresentationHost(
-        enabled:
-            mediaReady &&
-            ref.read(learningSessionProvider).playbackChain ==
-                LearningPlaybackChain.media,
-        suppressVisualView: _isNavigatingToDetail,
-        audioItemId: widget.audioItemId,
-        isPlaying: state.isPlaying,
-        onPlayPause: () {
-          if (state.phase == RetellPhase.listening) {
-            state.isPlaying
-                ? unawaited(player.pause())
-                : unawaited(player.resume());
-          } else {
-            _handleReplay();
-          }
-        },
-        onSessionChanged: (session) => _mediaPresentationSession = session,
-        builder: (context, presentation, mediaSurface) => LearningHotkeyScope(
+    return StudyActivityDetector(
+      onActivity: player.markStudyActivity,
+      child: wakelockBody(
+        child: PracticeMediaPresentationHost(
+          enabled:
+              mediaReady &&
+              ref.read(learningSessionProvider).playbackChain ==
+                  LearningPlaybackChain.media,
+          suppressVisualView: _isNavigatingToDetail,
+          audioItemId: widget.audioItemId,
+          isPlaying: state.isPlaying,
           onPlayPause: () {
             if (state.phase == RetellPhase.listening) {
-              state.isPlaying ? player.pause() : player.resume();
-            } else if (state.isRetellCountdown) {
-              _handleReplay();
+              state.isPlaying
+                  ? unawaited(player.pause())
+                  : unawaited(player.resume());
             } else {
               _handleReplay();
             }
           },
-          onPrevious: _goToPreviousParagraph,
-          onNext: _goToNextParagraph,
-          child: PopScope(
-            canPop: false,
-            onPopInvokedWithResult: (didPop, _) async {
-              if (didPop) return;
-              await _handleClose();
+          onSessionChanged: (session) => _mediaPresentationSession = session,
+          builder: (context, presentation, mediaSurface) => LearningHotkeyScope(
+            onPlayPause: () {
+              if (state.phase == RetellPhase.listening) {
+                state.isPlaying ? player.pause() : player.resume();
+              } else if (state.isRetellCountdown) {
+                _handleReplay();
+              } else {
+                _handleReplay();
+              }
             },
-            child: GuideFlowSequenceHost(
-              flows: guideFlows,
-              child: ParagraphPracticeScaffold(
-                title: l10n.retellTitle,
-                onClose: _handleClose,
-                onOpenSettings: _openSettings,
-                current: progressCurrent,
-                total: progressTotal,
-                progressText: progressText,
-                durationText: _formatDurationText(
-                  l10n,
-                  paragraphDuration: paragraphDuration,
-                ),
-                elapsed: sentences.isEmpty ? null : sentences.first.startTime,
-                remaining: sentences.isEmpty
-                    ? null
-                    : player.totalDuration - sentences.first.startTime,
-                onSeekToIndex: isMultiParagraph
-                    ? (p) => notifier.seekToParagraph(p)
-                    : (i) => notifier.seekToSentence(i),
-                topContent: presentation.enabled ? mediaSurface : null,
-                bodyWrapper: _wrapMediaStartup,
-                fullscreenBody: presentation.expanded ? mediaSurface : null,
-                paragraphContent: ParagraphSentenceListCard(
-                  sentences: sentences,
-                  displayMode: state.settings.keywordMethod != KeywordMethod.off
-                      ? state.displayMode
-                      : RetellDisplayMode.hideAll,
-                  keywordMap: keywords,
-                  playingSentenceIndex: state.phase == RetellPhase.listening
-                      ? state.playingSentenceIndex
-                      : -1,
-                  bookmarkedSentenceIndices: state.bookmarkedSentenceIndices,
-                  onSentenceTap: _handleSentenceDetail,
-                  onSentencePlayFrom: _handleSentencePlayFrom,
-                  onSentenceBookmarkToggle: (sentence) => ref
-                      .read(retellPlayerProvider.notifier)
-                      .toggleBookmark(widget.audioItemId, sentence),
-                  guideTargetLocalIdx: guideTargetLocalIdx,
-                  numberAreaGuideStep: numberStep,
-                  bodyAreaGuideStep: bodyStep,
-                ),
-                contentControls:
-                    state.settings.keywordMethod != KeywordMethod.off
-                    ? ParagraphVisibilityControls(
-                        selectedMode: state.displayMode,
-                        onChanged: player.setDisplayMode,
-                      )
-                    : null,
-                practiceControls: RepeatPracticePanel(
-                  l10n: l10n,
-                  theme: theme,
-                  recordingMode: recordingMode,
-                  isProcessing: isProcessing,
-                  currentAttempt: currentAttempt,
-                  hintText: state.phase == RetellPhase.listening
-                      ? (state.isPlaying
-                            ? l10n.retellListeningPhase
-                            : l10n.retellPreListenHint)
-                      : null,
-                  showCountdown: state.isRetellCountdown,
-                  isInPause:
-                      state.phase == RetellPhase.retelling &&
-                      !state.isRetellCountdown,
-                  countdownWidget: state.isRetellCountdown
-                      ? Consumer(
-                          builder: (context, ref, _) {
-                            final s = ref.watch(
-                              retellPlayerProvider.select(
-                                (s) => (
-                                  total: s.pauseDuration,
-                                  paused: s.isCountdownPaused,
-                                  fastForward: s.isCountdownFastForward,
-                                ),
-                              ),
-                            );
-                            return CountdownChip(
-                              total: s.total,
-                              isPaused: s.paused,
-                              isFastForward: s.fastForward,
-                              onTap: _takeOverCountdown,
-                              onPause: () => ref
-                                  .read(retellPlayerProvider.notifier)
-                                  .pauseCountdown(),
-                              onResume: () => ref
-                                  .read(retellPlayerProvider.notifier)
-                                  .resumeCountdown(),
-                            );
-                          },
+            onPrevious: _goToPreviousParagraph,
+            onNext: _goToNextParagraph,
+            child: PopScope(
+              canPop: false,
+              onPopInvokedWithResult: (didPop, _) async {
+                if (didPop) return;
+                await _handleClose();
+              },
+              child: GuideFlowSequenceHost(
+                flows: guideFlows,
+                child: ParagraphPracticeScaffold(
+                  title: l10n.retellTitle,
+                  onClose: _handleClose,
+                  onOpenSettings: _openSettings,
+                  current: progressCurrent,
+                  total: progressTotal,
+                  progressText: progressText,
+                  durationText: _formatDurationText(
+                    l10n,
+                    paragraphDuration: paragraphDuration,
+                  ),
+                  elapsed: sentences.isEmpty ? null : sentences.first.startTime,
+                  remaining: sentences.isEmpty
+                      ? null
+                      : player.totalDuration - sentences.first.startTime,
+                  onSeekToIndex: isMultiParagraph
+                      ? (p) => notifier.seekToParagraph(p)
+                      : (i) => notifier.seekToSentence(i),
+                  topContent: presentation.enabled ? mediaSurface : null,
+                  bodyWrapper: _wrapMediaStartup,
+                  fullscreenBody: presentation.expanded ? mediaSurface : null,
+                  paragraphContent: ParagraphSentenceListCard(
+                    sentences: sentences,
+                    displayMode:
+                        state.settings.keywordMethod != KeywordMethod.off
+                        ? state.displayMode
+                        : RetellDisplayMode.hideAll,
+                    keywordMap: keywords,
+                    playingSentenceIndex: state.phase == RetellPhase.listening
+                        ? state.playingSentenceIndex
+                        : -1,
+                    bookmarkedSentenceIndices: state.bookmarkedSentenceIndices,
+                    onSentenceTap: _handleSentenceDetail,
+                    onSentencePlayFrom: _handleSentencePlayFrom,
+                    onSentenceBookmarkToggle: (sentence) => ref
+                        .read(retellPlayerProvider.notifier)
+                        .toggleBookmark(widget.audioItemId, sentence),
+                    guideTargetLocalIdx: guideTargetLocalIdx,
+                    numberAreaGuideStep: numberStep,
+                    bodyAreaGuideStep: bodyStep,
+                  ),
+                  contentControls:
+                      state.settings.keywordMethod != KeywordMethod.off
+                      ? ParagraphVisibilityControls(
+                          selectedMode: state.displayMode,
+                          onChanged: player.setDisplayMode,
                         )
                       : null,
-                  onRecordTap: _handleRecordTap,
-                  onBeforePlayback: _prepareAttemptPlayback,
-                  showRatingBadge: retellRatingEnabled,
-                  ratingBadgeController: _ratingBadgeController,
-                  ratingPreviewControllerFactory: () =>
-                      ref.read(retellRecordingPreviewProvider),
-                  thresholds: RatingThresholds.retell,
-                  showAiReviewButton: true,
-                  isAiReviewLoading:
-                      reviewPhase == RetellReviewEvaluationPhase.loading ||
-                      reviewPhase == RetellReviewEvaluationPhase.streaming,
-                  onAiReviewTap: () =>
-                      unawaited(_handleAiReviewTap(currentAttempt)),
+                  practiceControls: RepeatPracticePanel(
+                    l10n: l10n,
+                    theme: theme,
+                    recordingMode: recordingMode,
+                    isProcessing: isProcessing,
+                    currentAttempt: currentAttempt,
+                    hintText: state.phase == RetellPhase.listening
+                        ? (state.isPlaying
+                              ? l10n.retellListeningPhase
+                              : l10n.retellPreListenHint)
+                        : null,
+                    showCountdown: state.isRetellCountdown,
+                    isInPause:
+                        state.phase == RetellPhase.retelling &&
+                        !state.isRetellCountdown,
+                    countdownWidget: state.isRetellCountdown
+                        ? Consumer(
+                            builder: (context, ref, _) {
+                              final s = ref.watch(
+                                retellPlayerProvider.select(
+                                  (s) => (
+                                    total: s.pauseDuration,
+                                    paused: s.isCountdownPaused,
+                                    fastForward: s.isCountdownFastForward,
+                                  ),
+                                ),
+                              );
+                              return CountdownChip(
+                                total: s.total,
+                                isPaused: s.paused,
+                                isFastForward: s.fastForward,
+                                onTap: _takeOverCountdown,
+                                onPause: () => ref
+                                    .read(retellPlayerProvider.notifier)
+                                    .pauseCountdown(),
+                                onResume: () => ref
+                                    .read(retellPlayerProvider.notifier)
+                                    .resumeCountdown(),
+                              );
+                            },
+                          )
+                        : null,
+                    onRecordTap: _handleRecordTap,
+                    onBeforePlayback: _prepareAttemptPlayback,
+                    showRatingBadge: retellRatingEnabled,
+                    ratingBadgeController: _ratingBadgeController,
+                    ratingPreviewControllerFactory: () =>
+                        ref.read(retellRecordingPreviewProvider),
+                    thresholds: RatingThresholds.retell,
+                    showAiReviewButton: true,
+                    isAiReviewLoading:
+                        reviewPhase == RetellReviewEvaluationPhase.loading ||
+                        reviewPhase == RetellReviewEvaluationPhase.streaming,
+                    onAiReviewTap: () =>
+                        unawaited(_handleAiReviewTap(currentAttempt)),
+                  ),
+                  canGoPrev: state.currentParagraphIndex > 0,
+                  isLast:
+                      state.currentParagraphIndex >= state.totalParagraphs - 1,
+                  centerIcon: _isRetellMainPlaybackActive(state)
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
+                  onPrevious: _goToPreviousParagraph,
+                  onNext: _goToNextParagraph,
+                  onCenter: state.phase == RetellPhase.listening
+                      ? (_isRetellMainPlaybackActive(state)
+                            ? player.pause
+                            : player.resume)
+                      : _handleReplay,
+                  isManualMode: state.settings.isManualMode,
+                  playCountText: formatPracticePlayCount(
+                    l10n,
+                    currentCount: state.currentRepeatCount,
+                    totalCount: state.settings.repeatCount,
+                  ),
+                  statusSuffixText: _formatSpeed(state.settings.playbackSpeed),
+                  l10n: l10n,
+                  theme: theme,
                 ),
-                canGoPrev: state.currentParagraphIndex > 0,
-                isLast:
-                    state.currentParagraphIndex >= state.totalParagraphs - 1,
-                centerIcon: _isRetellMainPlaybackActive(state)
-                    ? Icons.pause_rounded
-                    : Icons.play_arrow_rounded,
-                onPrevious: _goToPreviousParagraph,
-                onNext: _goToNextParagraph,
-                onCenter: state.phase == RetellPhase.listening
-                    ? (_isRetellMainPlaybackActive(state)
-                          ? player.pause
-                          : player.resume)
-                    : _handleReplay,
-                isManualMode: state.settings.isManualMode,
-                playCountText: formatPracticePlayCount(
-                  l10n,
-                  currentCount: state.currentRepeatCount,
-                  totalCount: state.settings.repeatCount,
-                ),
-                statusSuffixText: _formatSpeed(state.settings.playbackSpeed),
-                l10n: l10n,
-                theme: theme,
               ),
             ),
           ),

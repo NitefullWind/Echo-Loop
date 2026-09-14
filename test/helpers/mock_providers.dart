@@ -469,6 +469,7 @@ class TestSpeechRecordingController extends SpeechRecordingController {
 /// 测试用 RetellRecordingController — 不依赖平台通道
 class TestRetellRecordingController extends RetellRecordingController {
   final RetellRecordingState _initialState;
+  void Function(Duration duration)? recordingCompletionHandler;
 
   TestRetellRecordingController([
     this._initialState = const RetellRecordingState(),
@@ -478,7 +479,11 @@ class TestRetellRecordingController extends RetellRecordingController {
   RetellRecordingState build() => _initialState;
 
   @override
-  void setRecorder(StudyEventRecorder? recorder) {}
+  void setRecordingCompletionHandler(
+    void Function(Duration duration)? handler,
+  ) {
+    recordingCompletionHandler = handler;
+  }
 
   @override
   Future<void> startRecording({
@@ -533,6 +538,11 @@ class TestRetellRecordingController extends RetellRecordingController {
 
   /// 直接设置 state（测试辅助方法）
   void setState(RetellRecordingState newState) => state = newState;
+
+  /// 模拟底层录音服务完成一次有效录音。
+  void emitRecordingCompleted(Duration duration) {
+    recordingCompletionHandler?.call(duration);
+  }
 }
 
 // ========== TranscriptionApiClient ==========

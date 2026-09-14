@@ -892,7 +892,6 @@ class LearningSession extends _$LearningSession {
     LearningStage? catchUpStage,
     SubStageType? catchUpSubStage,
   }) async {
-    _startStudyTimer();
     final practice = ref.read(listeningPracticeProvider.notifier);
     final currentSettings = ref.read(listeningPracticeProvider).settings;
 
@@ -935,7 +934,7 @@ class LearningSession extends _$LearningSession {
     // 复述按 子阶段×轮次 记忆(轮次取本次会话的有效阶段);自由练习与按计划共用同槽位。
     // 补练场景按 catchUpStage 算曲线(补练 firstLearn 走 firstLearn)。briefing 选择已由
     // 屏幕落入偏好,这里按动态默认(速度/可见词比例)resolve 出完整设置(单一真相源)。
-    _initializeRetellPlayer(
+    await _initializeRetellPlayer(
       paragraphs,
       progress: progress,
       startSentenceIndex: startSentenceIndex,
@@ -1021,7 +1020,7 @@ class LearningSession extends _$LearningSession {
           ? retellSentences.first.text
           : null,
     );
-    _initializeRetellPlayer(
+    await _initializeRetellPlayer(
       sessionParagraphs,
       progress: progress,
       startSentenceIndex: _retellStartSentenceIndex(progress, isFreePlay),
@@ -1033,7 +1032,6 @@ class LearningSession extends _$LearningSession {
       return MediaLoadResult.cancelled;
     }
 
-    _startStudyTimer();
     _trackSessionStart();
     AppLogger.log(
       'Session',
@@ -1084,7 +1082,7 @@ class LearningSession extends _$LearningSession {
     return (slot: slot, settings: settings);
   }
 
-  void _initializeRetellPlayer(
+  Future<void> _initializeRetellPlayer(
     List<List<Sentence>> paragraphs, {
     required LearningProgress progress,
     required int? startSentenceIndex,
@@ -1092,7 +1090,7 @@ class LearningSession extends _$LearningSession {
     ParagraphPlaybackDriver? playbackDriver,
   }) {
     final resolved = _resolveRetellSettings(progress, effectiveStage);
-    ref
+    return ref
         .read(retellPlayerProvider.notifier)
         .initialize(
           paragraphs,
@@ -1302,13 +1300,18 @@ class LearningSession extends _$LearningSession {
     final blindPlayer = mode == LearningMode.blindListen
         ? ref.read(blindListenPlayerProvider.notifier)
         : null;
+    final retellPlayer = mode == LearningMode.retell
+        ? ref.read(retellPlayerProvider.notifier)
+        : null;
     _trackSessionEnd(
       durationMs:
           intensivePlayer?.elapsed.inMilliseconds ??
-          blindPlayer?.elapsed.inMilliseconds,
+          blindPlayer?.elapsed.inMilliseconds ??
+          retellPlayer?.elapsed.inMilliseconds,
     );
     if (mode != LearningMode.intensiveListen &&
-        mode != LearningMode.blindListen) {
+        mode != LearningMode.blindListen &&
+        mode != LearningMode.retell) {
       _stopPeriodicSaveTimer();
       await _saveStudyTime();
     }
@@ -1338,8 +1341,7 @@ class LearningSession extends _$LearningSession {
       // 跟读资源由 ListenAndRepeatController 在 Screen 层释放
     } else if (mode == LearningMode.retell) {
       // 释放复述播放器资源
-      final retellPlayer = ref.read(retellPlayerProvider.notifier);
-      retellPlayer.disposePlayer();
+      await retellPlayer?.disposePlayer();
     } else if (mode == LearningMode.reviewDifficultPractice) {
       // 释放难句补练播放器资源
       final player = ref.read(reviewDifficultPracticeProvider.notifier);

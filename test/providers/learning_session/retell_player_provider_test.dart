@@ -1,10 +1,12 @@
 import 'dart:async';
 
+import 'package:clock/clock.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart' as ja;
 
 import 'package:echo_loop/database/enums.dart';
+import 'package:echo_loop/database/providers.dart';
 import 'package:echo_loop/models/audio_engine_state.dart';
 import 'package:echo_loop/models/intensive_listen_settings.dart'
     show ShadowingControlMode;
@@ -12,12 +14,15 @@ import 'package:echo_loop/models/learning_progress.dart';
 import 'package:echo_loop/models/retell_settings.dart';
 import 'package:echo_loop/models/sentence.dart';
 import 'package:echo_loop/models/sentence_playback_result.dart';
+import 'package:echo_loop/models/study_stage.dart';
 import 'package:echo_loop/providers/audio_engine/foreground_audio_engine_provider.dart';
 import 'package:echo_loop/providers/learning_progress_provider.dart';
 import 'package:echo_loop/providers/settings_provider.dart';
 import 'package:echo_loop/providers/learning_session/learning_session_provider.dart';
 import 'package:echo_loop/providers/learning_session/paragraph_playback_driver.dart';
 import 'package:echo_loop/providers/learning_session/retell_player_provider.dart';
+import 'package:echo_loop/providers/retell_recording_controller_provider.dart';
+import 'package:echo_loop/services/study_activity_gate.dart';
 
 import '../../helpers/mock_providers.dart';
 
@@ -139,9 +144,141 @@ class _InMemoryLearningProgressNotifier extends TestLearningProgressNotifier {
 
 class _PassiveLearningSession extends TestLearningSession {
   _PassiveLearningSession([super.initialState]);
+}
+
+/// 记录段落复述写入新统计链路的内容，避免测试依赖真实数据库。
+class _RecordingRetellStudyTimeService extends FakeStudyTimeService {
+  final List<({Duration duration, String text, StudyStage stage})>
+  sentencePlaybacks = [];
+  final List<({Duration duration, StudyStage stage})> speechRecognitions = [];
+  final List<({int count, StudyStage stage})> outputWords = [];
+  final List<
+    ({Duration studyDuration, Duration inputDuration, StudyStage stage})
+  >
+  sessionDurations = [];
+  int flushCount = 0;
 
   @override
-  void addOutputWords(int count) {}
+  void submitSentencePlayback({
+    required Duration duration,
+    required String text,
+    required StudyStage stage,
+    bool recordInputDuration = true,
+    DateTime? date,
+  }) {
+    sentencePlaybacks.add((duration: duration, text: text, stage: stage));
+  }
+
+  @override
+  void submitSpeechRecognition({
+    required Duration duration,
+    int producedWordCount = 0,
+    required StudyStage stage,
+    DateTime? date,
+  }) {
+    speechRecognitions.add((duration: duration, stage: stage));
+  }
+
+  @override
+  void submitOutputWords(
+    int count, {
+    required StudyStage stage,
+    DateTime? date,
+  }) {
+    outputWords.add((count: count, stage: stage));
+  }
+
+  @override
+  Future<void> recordSessionDurations({
+    required Duration studyDuration,
+    Duration inputDuration = Duration.zero,
+    required StudyStage stage,
+    DateTime? date,
+  }) async {
+    sessionDurations.add((
+      studyDuration: studyDuration,
+      inputDuration: inputDuration,
+      stage: stage,
+    ));
+  }
+
+  @override
+  Future<void> flush() async => flushCount += 1;
+}
+
+/// 立即完成段落播放，供统计测试精确验证完整播放和断点后缀。
+class _CompletingParagraphPlaybackDriver implements ParagraphPlaybackDriver {
+  int _sessionId = 0;
+
+  @override
+  int newSession() => ++_sessionId;
+
+  @override
+  bool isActiveSession(int sessionId) => sessionId == _sessionId;
+
+  @override
+  Stream<Duration> get positionStream => const Stream.empty();
+
+  @override
+  Future<void> pause() async {}
+
+  @override
+  Future<void> setSpeed(double speed) async {}
+
+  @override
+  Future<void> seek(Duration position) async {}
+
+  @override
+  Future<SentencePlaybackResult> playRange(
+    Duration start,
+    Duration end,
+    int sessionId, {
+    required double speed,
+    required void Function() onRangeReady,
+  }) async {
+    onRangeReady();
+    return SentencePlaybackResult.completed;
+  }
+
+  @override
+  void bindLockScreen({
+    required Future<void> Function() onPlay,
+    required Future<void> Function() onPause,
+    required Future<void> Function() onNext,
+    required Future<void> Function() onPrevious,
+  }) {}
+
+  @override
+  void setSessionActive(bool active) {}
+
+  @override
+  void setProgressFrozen(bool frozen) {}
+
+  @override
+  void unbindLockScreen() {}
+}
+
+ProviderContainer _createRetellStatsContainer(
+  _RecordingRetellStudyTimeService studyTimeService, {
+  TestRetellRecordingController? recordingController,
+  StudyActivityGate? activityGate,
+}) {
+  return ProviderContainer(
+    overrides: [
+      foregroundAudioEngineProvider.overrideWith(TestForegroundAudioEngine.new),
+      learningSessionProvider.overrideWith(TestLearningSession.new),
+      analyticsOverride(),
+      ...learningSettingsOverrides(),
+      ...studyTimeOverrides(),
+      studyTimeServiceProvider.overrideWithValue(studyTimeService),
+      if (recordingController != null)
+        retellRecordingControllerProvider.overrideWith(
+          () => recordingController,
+        ),
+      if (activityGate != null)
+        studyActivityGateProvider.overrideWithValue(activityGate),
+    ],
+  );
 }
 
 /// 记录复述状态机对底层播放契约的调用，不依赖音频或视频实现。
@@ -360,6 +497,7 @@ class PositionDrivenTestAudioEngine extends ForegroundAudioEngine {
   final StreamController<Duration> _posController =
       StreamController<Duration>.broadcast();
   final Completer<void> _playGate = Completer<void>();
+  final Completer<void> rangeReady = Completer<void>();
   Duration? lastPlayStart;
 
   @override
@@ -401,6 +539,7 @@ class PositionDrivenTestAudioEngine extends ForegroundAudioEngine {
   }) async {
     lastPlayStart = start;
     onClipReady?.call(); // 模拟 clip+seek(0) 落定后通知调用方订阅
+    if (!rangeReady.isCompleted) rangeReady.complete();
     await _playGate.future; // 挂住，保持 session 活跃 / listening 阶段
   }
 
@@ -438,6 +577,172 @@ void main() {
       // 重置
       final reset = finished.copyWith(stepFinished: false);
       expect(reset.stepFinished, false);
+    });
+  });
+
+  group('RetellPlayer 新学习统计', () {
+    test('页面退出记录有效学习时长，手动暂停期间不累计且重复退出只收尾一次', () async {
+      final studyTimeService = _RecordingRetellStudyTimeService();
+      final activityGate = StudyActivityGate();
+      final container = _createRetellStatsContainer(
+        studyTimeService,
+        activityGate: activityGate,
+      );
+      addTearDown(() {
+        activityGate.dispose();
+        container.dispose();
+      });
+
+      var now = DateTime(2026, 9, 14, 12);
+      await withClock(Clock(() => now), () async {
+        final notifier = container.read(retellPlayerProvider.notifier);
+        await notifier.initialize([
+          [
+            Sentence(
+              index: 0,
+              text: 'A paragraph',
+              startTime: Duration.zero,
+              endTime: const Duration(seconds: 2),
+            ),
+          ],
+        ], playbackDriver: _CompletingParagraphPlaybackDriver());
+
+        now = now.add(const Duration(seconds: 3));
+        notifier.pauseStudySession();
+        now = now.add(const Duration(seconds: 10));
+        notifier.resumeStudySession();
+        now = now.add(const Duration(seconds: 2));
+
+        await Future.wait([notifier.disposePlayer(), notifier.disposePlayer()]);
+
+        expect(studyTimeService.sessionDurations, hasLength(2));
+        expect(
+          studyTimeService.sessionDurations
+              .map((record) => record.studyDuration)
+              .reduce((a, b) => a + b),
+          const Duration(seconds: 5),
+        );
+        expect(
+          studyTimeService.sessionDurations.every(
+            (record) =>
+                record.inputDuration == Duration.zero &&
+                record.stage == StudyStage.retell,
+          ),
+          isTrue,
+        );
+      });
+    });
+
+    test('完整段落播放写入复述输入，断点续播只统计实际播放后缀', () async {
+      final studyTimeService = _RecordingRetellStudyTimeService();
+      final container = _createRetellStatsContainer(studyTimeService);
+      addTearDown(container.dispose);
+
+      final notifier = container.read(retellPlayerProvider.notifier);
+      await notifier.initialize(
+        [
+          [
+            Sentence(
+              index: 0,
+              text: 'First',
+              startTime: Duration.zero,
+              endTime: const Duration(seconds: 5),
+            ),
+            Sentence(
+              index: 1,
+              text: 'Second words',
+              startTime: const Duration(seconds: 5),
+              endTime: const Duration(seconds: 15),
+            ),
+          ],
+        ],
+        startSentenceIndex: 1,
+        settings: const RetellSettings(
+          controlMode: ShadowingControlMode.manual,
+        ),
+        playbackDriver: _CompletingParagraphPlaybackDriver(),
+      );
+
+      await notifier.startPlaying();
+
+      expect(studyTimeService.sentencePlaybacks, hasLength(1));
+      expect(
+        studyTimeService.sentencePlaybacks.single.duration,
+        const Duration(seconds: 10),
+      );
+      expect(studyTimeService.sentencePlaybacks.single.text, 'Second words');
+      expect(
+        studyTimeService.sentencePlaybacks.single.stage,
+        StudyStage.retell,
+      );
+
+      await notifier.completeRetellingTurn();
+
+      expect(studyTimeService.outputWords, hasLength(1));
+      expect(studyTimeService.outputWords.single.count, 3);
+      expect(studyTimeService.outputWords.single.stage, StudyStage.retell);
+      await notifier.disposePlayer();
+    });
+
+    test('取消段落播放不写入输入统计', () async {
+      final studyTimeService = _RecordingRetellStudyTimeService();
+      final container = _createRetellStatsContainer(studyTimeService);
+      addTearDown(container.dispose);
+
+      final notifier = container.read(retellPlayerProvider.notifier);
+      await notifier.initialize([
+        [
+          Sentence(
+            index: 0,
+            text: 'Cancelled',
+            startTime: Duration.zero,
+            endTime: const Duration(seconds: 2),
+          ),
+        ],
+      ], playbackDriver: _RecordingParagraphPlaybackDriver());
+
+      await notifier.startPlaying();
+
+      expect(studyTimeService.sentencePlaybacks, isEmpty);
+      await notifier.disposePlayer();
+    });
+
+    test('录音完成写入语音识别时长，旧会话迟到回调不会污染新会话', () async {
+      final studyTimeService = _RecordingRetellStudyTimeService();
+      final recordingController = TestRetellRecordingController();
+      final container = _createRetellStatsContainer(
+        studyTimeService,
+        recordingController: recordingController,
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(retellPlayerProvider.notifier);
+      final paragraphs = [
+        [
+          Sentence(
+            index: 0,
+            text: 'Recorded',
+            startTime: Duration.zero,
+            endTime: const Duration(seconds: 2),
+          ),
+        ],
+      ];
+      await notifier.initialize(paragraphs);
+      final oldHandler = recordingController.recordingCompletionHandler;
+      recordingController.emitRecordingCompleted(
+        const Duration(milliseconds: 1200),
+      );
+      expect(studyTimeService.speechRecognitions, hasLength(1));
+
+      await notifier.initialize(paragraphs);
+      oldHandler?.call(const Duration(seconds: 3));
+
+      expect(studyTimeService.speechRecognitions, hasLength(1));
+      expect(
+        studyTimeService.speechRecognitions.single.stage,
+        StudyStage.retell,
+      );
+      await notifier.disposePlayer();
     });
   });
 
@@ -481,7 +786,7 @@ void main() {
         ],
       ];
 
-      notifier.initialize(paragraphs, playbackDriver: driver);
+      await notifier.initialize(paragraphs, playbackDriver: driver);
       await notifier.startPlaying();
 
       expect(driver.ranges.single.start, const Duration(seconds: 1));
@@ -521,7 +826,7 @@ void main() {
         ),
       ];
 
-      notifier.initialize([
+      await notifier.initialize([
         [sentences[0]],
         [sentences[1]],
       ]);
@@ -557,7 +862,7 @@ void main() {
       final delayedNotifier = delayedContainer.read(
         retellPlayerProvider.notifier,
       );
-      delayedNotifier.initialize([
+      await delayedNotifier.initialize([
         [
           Sentence(
             index: 0,
@@ -597,7 +902,7 @@ void main() {
       addTearDown(container.dispose);
 
       final notifier = container.read(retellPlayerProvider.notifier);
-      notifier.initialize([
+      await notifier.initialize([
         [
           Sentence(
             index: 0,
@@ -650,7 +955,7 @@ void main() {
       addTearDown(saveContainer.dispose);
 
       final saveNotifier = saveContainer.read(retellPlayerProvider.notifier);
-      saveNotifier.initialize([
+      await saveNotifier.initialize([
         [
           Sentence(
             index: 3,
@@ -704,7 +1009,7 @@ void main() {
       addTearDown(saveContainer.dispose);
 
       final saveNotifier = saveContainer.read(retellPlayerProvider.notifier);
-      saveNotifier.initialize([
+      await saveNotifier.initialize([
         [
           Sentence(
             index: 5,
@@ -735,6 +1040,7 @@ void main() {
         ),
       );
       final posEngine = PositionDrivenTestAudioEngine();
+      final studyTimeService = _RecordingRetellStudyTimeService();
       final posContainer = ProviderContainer(
         overrides: [
           foregroundAudioEngineProvider.overrideWith(() => posEngine),
@@ -752,6 +1058,7 @@ void main() {
           analyticsOverride(),
           ...learningSettingsOverrides(),
           ...studyTimeOverrides(),
+          studyTimeServiceProvider.overrideWithValue(studyTimeService),
         ],
       );
       addTearDown(() {
@@ -788,10 +1095,10 @@ void main() {
         ),
       ];
       // 断点恢复到第 3 句（全局 index 2）
-      posNotifier.initialize([para], startSentenceIndex: 2);
+      await posNotifier.initialize([para], startSentenceIndex: 2);
 
       final playing = posNotifier.startPlaying(); // 挂在 playGate，session 保持活跃
-      await Future<void>.delayed(Duration.zero);
+      await posEngine.rangeReady.future;
 
       // 起播即从断点句（local 2）开始，并持久化 index 2
       expect(posContainer.read(retellPlayerProvider).playingSentenceIndex, 2);
@@ -808,11 +1115,133 @@ void main() {
       await posEngine.emitPosition(const Duration(seconds: 40));
       expect(posContainer.read(retellPlayerProvider).playingSentenceIndex, 3);
       expect(progressNotifier.savedIndices, [2, 3]);
+      expect(studyTimeService.sentencePlaybacks, hasLength(1));
+      expect(studyTimeService.sentencePlaybacks.single.text, 's2');
+      expect(
+        studyTimeService.sentencePlaybacks.single.duration,
+        const Duration(seconds: 3),
+      );
 
       // 收尾：失效 session 后放行，让 startPlaying 干净返回
       posEngine.invalidateSession();
       posEngine.release();
       await playing;
+    });
+
+    test('自然完成时逐句写入复述输入统计', () async {
+      final studyTimeService = _RecordingRetellStudyTimeService();
+      final container = _createRetellStatsContainer(studyTimeService);
+      addTearDown(container.dispose);
+
+      final notifier = container.read(retellPlayerProvider.notifier);
+      await notifier.initialize(
+        [
+          [
+            Sentence(
+              index: 0,
+              text: 'First words',
+              startTime: Duration.zero,
+              endTime: const Duration(seconds: 2),
+            ),
+            Sentence(
+              index: 1,
+              text: 'Second words',
+              startTime: const Duration(seconds: 2),
+              endTime: const Duration(seconds: 5),
+            ),
+            Sentence(
+              index: 2,
+              text: 'Third words',
+              startTime: const Duration(seconds: 5),
+              endTime: const Duration(seconds: 9),
+            ),
+          ],
+        ],
+        settings: const RetellSettings(
+          controlMode: ShadowingControlMode.manual,
+        ),
+        playbackDriver: _CompletingParagraphPlaybackDriver(),
+      );
+
+      await notifier.startPlaying();
+
+      expect(
+        studyTimeService.sentencePlaybacks
+            .map((record) => record.text)
+            .toList(),
+        ['First words', 'Second words', 'Third words'],
+      );
+      expect(
+        studyTimeService.sentencePlaybacks
+            .map((record) => record.duration)
+            .toList(),
+        [
+          const Duration(seconds: 2),
+          const Duration(seconds: 3),
+          const Duration(seconds: 4),
+        ],
+      );
+    });
+
+    test('播放取消时保留已完成句子，不统计未完成句子', () async {
+      final studyTimeService = _RecordingRetellStudyTimeService();
+      final posEngine = PositionDrivenTestAudioEngine();
+      final container = ProviderContainer(
+        overrides: [
+          foregroundAudioEngineProvider.overrideWith(() => posEngine),
+          learningSessionProvider.overrideWith(TestLearningSession.new),
+          analyticsOverride(),
+          ...learningSettingsOverrides(),
+          ...studyTimeOverrides(),
+          studyTimeServiceProvider.overrideWithValue(studyTimeService),
+        ],
+      );
+      addTearDown(() {
+        posEngine.release();
+        container.dispose();
+      });
+
+      final notifier = container.read(retellPlayerProvider.notifier);
+      await notifier.initialize([
+        [
+          Sentence(
+            index: 0,
+            text: 'Completed sentence',
+            startTime: Duration.zero,
+            endTime: const Duration(seconds: 2),
+          ),
+          Sentence(
+            index: 1,
+            text: 'Incomplete sentence',
+            startTime: const Duration(seconds: 2),
+            endTime: const Duration(seconds: 5),
+          ),
+          Sentence(
+            index: 2,
+            text: 'Still incomplete sentence',
+            startTime: const Duration(seconds: 5),
+            endTime: const Duration(seconds: 8),
+          ),
+        ],
+      ]);
+
+      final playing = notifier.startPlaying();
+      await posEngine.rangeReady.future;
+      // 一次 position 可能跨过多个句尾，必须逐句补记而不是只记当前句。
+      await posEngine.emitPosition(const Duration(seconds: 5));
+      expect(studyTimeService.sentencePlaybacks, hasLength(2));
+      expect(
+        studyTimeService.sentencePlaybacks
+            .map((record) => record.text)
+            .toList(),
+        ['Completed sentence', 'Incomplete sentence'],
+      );
+
+      posEngine.invalidateSession();
+      posEngine.release();
+      await playing;
+
+      expect(studyTimeService.sentencePlaybacks, hasLength(2));
     });
 
     test('复述倒计时中点击上一段会正确进入上一段，不会停留在当前段', () async {
@@ -841,7 +1270,7 @@ void main() {
       final countdownNotifier = countdownContainer.read(
         retellPlayerProvider.notifier,
       );
-      countdownNotifier.initialize([
+      await countdownNotifier.initialize([
         [
           Sentence(
             index: 0,
@@ -920,7 +1349,7 @@ void main() {
         addTearDown(testContainer.dispose);
 
         final testNotifier = testContainer.read(retellPlayerProvider.notifier);
-        testNotifier.initialize([
+        await testNotifier.initialize([
           [
             Sentence(
               index: 0,
@@ -998,7 +1427,7 @@ void main() {
       addTearDown(testContainer.dispose);
 
       final testNotifier = testContainer.read(retellPlayerProvider.notifier);
-      testNotifier.initialize([
+      await testNotifier.initialize([
         [
           Sentence(
             index: 0,
@@ -1054,7 +1483,7 @@ void main() {
       final countdownNotifier = countdownContainer.read(
         retellPlayerProvider.notifier,
       );
-      countdownNotifier.initialize([
+      await countdownNotifier.initialize([
         [
           Sentence(
             index: 0,
@@ -1165,7 +1594,7 @@ void main() {
         paragraphCount: 1,
         sentencesPerParagraph: 5,
       );
-      notifier.initialize(paragraphs);
+      await notifier.initialize(paragraphs);
       notifier.setDisplayMode(RetellDisplayMode.showAll);
 
       await notifier.seekToSentence(2);
@@ -1205,7 +1634,7 @@ void main() {
         paragraphCount: 2,
         sentencesPerParagraph: 4,
       );
-      notifier.initialize(paragraphs);
+      await notifier.initialize(paragraphs);
       notifier.setDisplayMode(RetellDisplayMode.showAll);
 
       // 跨段 seek 到段 1 第 2 句（globalIdx = 6）
@@ -1246,7 +1675,7 @@ void main() {
         paragraphCount: 3,
         sentencesPerParagraph: 4,
       );
-      notifier.initialize(paragraphs);
+      await notifier.initialize(paragraphs);
 
       // 跳到第 3 段（index=2）→ 落在该段，listening phase
       await notifier.seekToParagraph(2);
@@ -1292,7 +1721,7 @@ void main() {
         paragraphCount: 1,
         sentencesPerParagraph: 5,
       );
-      notifier.initialize(paragraphs);
+      await notifier.initialize(paragraphs);
 
       // 模拟用户在播放中进入"等待用户操作"，phase 切到 retelling
       notifier.enterWaitingForUser(stopImmediately: true);
@@ -1367,7 +1796,7 @@ void main() {
         paragraphCount: 2,
         sentencesPerParagraph: 5,
       );
-      notifier.initialize(paragraphs);
+      await notifier.initialize(paragraphs);
 
       // 进入段 0 第 3 句，然后 pause
       await notifier.seekToSentence(3);
