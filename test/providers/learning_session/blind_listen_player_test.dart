@@ -1,20 +1,27 @@
 import 'dart:async';
 
+import 'package:clock/clock.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart';
 import 'package:just_audio/just_audio.dart' as ja;
 
 import 'package:echo_loop/database/enums.dart';
+import 'package:echo_loop/database/providers.dart';
 import 'package:echo_loop/models/audio_engine_state.dart';
 import 'package:echo_loop/models/blind_listen_settings.dart';
 import 'package:echo_loop/models/intensive_listen_settings.dart';
 import 'package:echo_loop/models/learning_progress.dart';
 import 'package:echo_loop/models/sentence.dart';
+import 'package:echo_loop/models/study_stage.dart';
 import 'package:echo_loop/providers/audio_engine/audio_engine_provider.dart';
 import 'package:echo_loop/providers/learning_progress_provider.dart';
 import 'package:echo_loop/providers/settings_provider.dart';
 import 'package:echo_loop/providers/learning_session/blind_listen_player_provider.dart';
 import 'package:echo_loop/providers/learning_session/learning_session_provider.dart';
+import 'package:echo_loop/services/study_activity_gate.dart';
+import 'package:echo_loop/services/study_time_service.dart';
 
 import '../../helpers/mock_providers.dart';
 
@@ -253,6 +260,8 @@ ProviderContainer _buildContainer({
   required TestAudioEngine engine,
   TestLearningProgressNotifier? progressNotifier,
   bool isFreePlay = false,
+  StudyTimeService? studyTimeService,
+  StudyActivityGate? activityGate,
 }) {
   // 兜底注入一个 noop progressNotifier，避免触发真实 appDatabaseProvider 的 LateInitializationError
   final notifier = progressNotifier ?? TestLearningProgressNotifier();
@@ -271,11 +280,83 @@ ProviderContainer _buildContainer({
       learningProgressNotifierProvider.overrideWith(() => notifier),
       analyticsOverride(),
       ...studyTimeOverrides(),
+      if (studyTimeService != null)
+        studyTimeServiceProvider.overrideWithValue(studyTimeService),
+      if (activityGate != null)
+        studyActivityGateProvider.overrideWithValue(activityGate),
     ],
   );
 }
 
+/// 记录全文盲听统计调用，避免测试依赖真实数据库。
+class _RecordingStudyTimeService extends FakeStudyTimeService {
+  final List<_SentencePlaybackRecord> sentencePlaybacks = [];
+  final List<_SessionDurationRecord> sessionDurations = [];
+
+  @override
+  void submitSentencePlayback({
+    required Duration duration,
+    required String text,
+    required StudyStage stage,
+    bool recordInputDuration = true,
+    DateTime? date,
+  }) {
+    sentencePlaybacks.add(
+      _SentencePlaybackRecord(
+        duration: duration,
+        text: text,
+        stage: stage,
+        recordInputDuration: recordInputDuration,
+      ),
+    );
+  }
+
+  @override
+  Future<void> recordSessionDurations({
+    required Duration studyDuration,
+    Duration inputDuration = Duration.zero,
+    required StudyStage stage,
+    DateTime? date,
+  }) async {
+    sessionDurations.add(
+      _SessionDurationRecord(
+        studyDuration: studyDuration,
+        inputDuration: inputDuration,
+        stage: stage,
+      ),
+    );
+  }
+}
+
+class _SentencePlaybackRecord {
+  const _SentencePlaybackRecord({
+    required this.duration,
+    required this.text,
+    required this.stage,
+    required this.recordInputDuration,
+  });
+
+  final Duration duration;
+  final String text;
+  final StudyStage stage;
+  final bool recordInputDuration;
+}
+
+class _SessionDurationRecord {
+  const _SessionDurationRecord({
+    required this.studyDuration,
+    required this.inputDuration,
+    required this.stage,
+  });
+
+  final Duration studyDuration;
+  final Duration inputDuration;
+  final StudyStage stage;
+}
+
 void main() {
+  final binding = TestWidgetsFlutterBinding.ensureInitialized();
+
   group('BlindListenPlayerState', () {
     test('初始状态 — 默认值正确', () {
       const state = BlindListenPlayerState();
@@ -427,7 +508,7 @@ void main() {
         paragraphCount: 1,
         sentencesPerParagraph: 5,
       );
-      notifier.initializeParagraphs(
+      await notifier.initializeParagraphs(
         paragraphs,
         const BlindListenSettings(repeatCount: 3),
       );
@@ -460,7 +541,7 @@ void main() {
         paragraphCount: 3,
         sentencesPerParagraph: 4,
       );
-      notifier.initializeParagraphs(
+      await notifier.initializeParagraphs(
         paragraphs,
         const BlindListenSettings(repeatCount: 3),
       );
@@ -488,7 +569,7 @@ void main() {
         paragraphCount: 3,
         sentencesPerParagraph: 4,
       );
-      notifier.initializeParagraphs(
+      await notifier.initializeParagraphs(
         paragraphs,
         const BlindListenSettings(repeatCount: 3),
       );
@@ -530,7 +611,10 @@ void main() {
         sentencesPerParagraph: 3,
         sentenceDurationMs: 2000,
       );
-      notifier.initializeParagraphs(paragraphs, const BlindListenSettings());
+      await notifier.initializeParagraphs(
+        paragraphs,
+        const BlindListenSettings(),
+      );
       await notifier.startPlaying();
 
       await notifier.seekToSentence(2);
@@ -550,7 +634,7 @@ void main() {
         paragraphCount: 1,
         sentencesPerParagraph: 1,
       );
-      notifier.initializeParagraphs(
+      await notifier.initializeParagraphs(
         paragraphs,
         const BlindListenSettings(repeatCount: 0),
       );
@@ -590,7 +674,10 @@ void main() {
         paragraphCount: 2,
         sentencesPerParagraph: 3,
       );
-      notifier.initializeParagraphs(paragraphs, const BlindListenSettings());
+      await notifier.initializeParagraphs(
+        paragraphs,
+        const BlindListenSettings(),
+      );
       await notifier.startPlaying();
       await Future<void>.delayed(const Duration(milliseconds: 1));
 
@@ -633,7 +720,10 @@ void main() {
           paragraphCount: 1,
           sentencesPerParagraph: 5,
         );
-        notifier.initializeParagraphs(paragraphs, const BlindListenSettings());
+        await notifier.initializeParagraphs(
+          paragraphs,
+          const BlindListenSettings(),
+        );
 
         // 通过 seekToSentence 进入第 3 句的播放状态
         await notifier.seekToSentence(3);
@@ -665,7 +755,10 @@ void main() {
         sentencesPerParagraph: 3,
         sentenceDurationMs: 2000,
       );
-      notifier.initializeParagraphs(paragraphs, const BlindListenSettings());
+      await notifier.initializeParagraphs(
+        paragraphs,
+        const BlindListenSettings(),
+      );
 
       await notifier.seekToSentence(2);
       await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -686,7 +779,10 @@ void main() {
         paragraphCount: 2,
         sentencesPerParagraph: 5,
       );
-      notifier.initializeParagraphs(paragraphs, const BlindListenSettings());
+      await notifier.initializeParagraphs(
+        paragraphs,
+        const BlindListenSettings(),
+      );
 
       // 进入段 0 的第 3 句，然后 pause
       await notifier.seekToSentence(3);
@@ -712,7 +808,10 @@ void main() {
         paragraphCount: 2,
         sentencesPerParagraph: 5,
       );
-      notifier.initializeParagraphs(paragraphs, const BlindListenSettings());
+      await notifier.initializeParagraphs(
+        paragraphs,
+        const BlindListenSettings(),
+      );
 
       // 先到段 1，再到第 3 句，pause，再回段 0
       await notifier.seekToSentence(8);
@@ -735,7 +834,7 @@ void main() {
         paragraphCount: 2,
         sentencesPerParagraph: 2,
       );
-      notifier.initializeParagraphs(
+      await notifier.initializeParagraphs(
         paragraphs,
         const BlindListenSettings(
           pauseMode: PauseMode.fixed,
@@ -766,7 +865,10 @@ void main() {
         paragraphCount: 1,
         sentencesPerParagraph: 5,
       );
-      notifier.initializeParagraphs(paragraphs, const BlindListenSettings());
+      await notifier.initializeParagraphs(
+        paragraphs,
+        const BlindListenSettings(),
+      );
 
       // 未开播直接 pause
       await notifier.pause();
@@ -778,7 +880,7 @@ void main() {
   });
 
   group('BlindListenPlayer currentSentenceGlobalIndex', () {
-    test('未开播退化为当前段首句的全局索引', () {
+    test('未开播退化为当前段首句的全局索引', () async {
       final engine = _FastTestAudioEngine();
       final container = _buildContainer(engine: engine);
       addTearDown(container.dispose);
@@ -788,7 +890,10 @@ void main() {
         paragraphCount: 2,
         sentencesPerParagraph: 4,
       );
-      notifier.initializeParagraphs(paragraphs, const BlindListenSettings());
+      await notifier.initializeParagraphs(
+        paragraphs,
+        const BlindListenSettings(),
+      );
 
       // 段 0 段首句 globalIdx = 0
       expect(notifier.currentSentenceGlobalIndex, 0);
@@ -814,7 +919,10 @@ void main() {
         paragraphCount: 2,
         sentencesPerParagraph: 4,
       );
-      notifier.initializeParagraphs(paragraphs, const BlindListenSettings());
+      await notifier.initializeParagraphs(
+        paragraphs,
+        const BlindListenSettings(),
+      );
 
       await notifier.seekToSentence(5);
       await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -829,7 +937,7 @@ void main() {
       final container = _buildContainer(engine: engine);
       addTearDown(container.dispose);
       final notifier = container.read(blindListenPlayerProvider.notifier);
-      notifier.initializeParagraphs(
+      await notifier.initializeParagraphs(
         _buildParagraphs(paragraphCount: 2, sentencesPerParagraph: 3),
         const BlindListenSettings(),
       );
@@ -849,7 +957,7 @@ void main() {
       final container = _buildContainer(engine: engine);
       addTearDown(container.dispose);
       final notifier = container.read(blindListenPlayerProvider.notifier);
-      notifier.initializeParagraphs(
+      await notifier.initializeParagraphs(
         _buildParagraphs(paragraphCount: 2, sentencesPerParagraph: 3),
         const BlindListenSettings(),
       );
@@ -869,13 +977,13 @@ void main() {
       final container = _buildContainer(engine: engine);
       addTearDown(container.dispose);
       final notifier = container.read(blindListenPlayerProvider.notifier);
-      notifier.initializeParagraphs(
+      await notifier.initializeParagraphs(
         _buildParagraphs(paragraphCount: 2, sentencesPerParagraph: 3),
         const BlindListenSettings(),
       );
       await notifier.startPlaying();
 
-      notifier.disposePlayer();
+      await notifier.disposePlayer();
 
       expect(engine.lastOnPlay, isNull);
       expect(engine.lastOnNext, isNull);
@@ -884,6 +992,223 @@ void main() {
         isNull,
         reason: '离开任务后 handler 恢复读裸 player',
       );
+    });
+  });
+
+  group('BlindListenPlayer 新学习统计', () {
+    test('后台连续播放时仍累计页面学习时长和输入时长', () {
+      fakeAsync((async) {
+        withClock(async.getClock(DateTime(2026, 9, 14, 14)), () {
+          binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+          final activityGate = StudyActivityGate();
+          final engine = _PositionDrivenBlindTestAudioEngine();
+          final studyTimeService = _RecordingStudyTimeService();
+          final container = _buildContainer(
+            engine: engine,
+            studyTimeService: studyTimeService,
+            activityGate: activityGate,
+          );
+          final notifier = container.read(blindListenPlayerProvider.notifier);
+          var initialized = false;
+
+          notifier
+              .initializeParagraphs(
+                _buildParagraphs(paragraphCount: 1, sentencesPerParagraph: 1),
+                const BlindListenSettings(),
+              )
+              .then((_) => initialized = true);
+          async.flushMicrotasks();
+          expect(initialized, isTrue);
+
+          notifier.startPlaying();
+          async.flushMicrotasks();
+
+          binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+          binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+          async.elapse(const Duration(minutes: 7));
+          async.flushMicrotasks();
+
+          final recordedStudyMilliseconds = studyTimeService.sessionDurations
+              .map((record) => record.studyDuration.inMilliseconds)
+              .fold<int>(0, (total, value) => total + value);
+          final recordedInputMilliseconds = studyTimeService.sessionDurations
+              .map((record) => record.inputDuration.inMilliseconds)
+              .fold<int>(0, (total, value) => total + value);
+          expect(recordedStudyMilliseconds, greaterThanOrEqualTo(420000));
+          expect(recordedInputMilliseconds, greaterThanOrEqualTo(420000));
+
+          engine.invalidateSession();
+          engine.release();
+          async.flushMicrotasks();
+          container.dispose();
+          activityGate.dispose();
+          binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        });
+      });
+    });
+
+    test('持续播放超过 idle timeout 仍累计页面学习时长', () {
+      fakeAsync((async) {
+        withClock(async.getClock(DateTime(2026, 9, 14, 14)), () {
+          final engine = _PositionDrivenBlindTestAudioEngine();
+          final studyTimeService = _RecordingStudyTimeService();
+          final container = _buildContainer(
+            engine: engine,
+            studyTimeService: studyTimeService,
+          );
+          final notifier = container.read(blindListenPlayerProvider.notifier);
+          var initialized = false;
+
+          notifier
+              .initializeParagraphs(
+                _buildParagraphs(paragraphCount: 1, sentencesPerParagraph: 1),
+                const BlindListenSettings(),
+              )
+              .then((_) => initialized = true);
+          async.flushMicrotasks();
+          expect(initialized, isTrue);
+
+          notifier.startPlaying();
+          async.flushMicrotasks();
+
+          async.elapse(const Duration(minutes: 2, seconds: 30));
+          async.flushMicrotasks();
+
+          final recordedStudyMilliseconds = studyTimeService.sessionDurations
+              .map((record) => record.studyDuration.inMilliseconds)
+              .fold<int>(0, (total, value) => total + value);
+          expect(recordedStudyMilliseconds, greaterThanOrEqualTo(150000));
+
+          engine.invalidateSession();
+          engine.release();
+          async.flushMicrotasks();
+          container.dispose();
+        });
+      });
+    });
+
+    test('完整句子结束时立即逐句提交输入统计', () async {
+      final engine = _PositionDrivenBlindTestAudioEngine();
+      final studyTimeService = _RecordingStudyTimeService();
+      final container = _buildContainer(
+        engine: engine,
+        studyTimeService: studyTimeService,
+      );
+      addTearDown(container.dispose);
+      final notifier = container.read(blindListenPlayerProvider.notifier);
+      final paragraphs = _buildParagraphs(
+        paragraphCount: 1,
+        sentencesPerParagraph: 2,
+      );
+
+      await notifier.initializeParagraphs(
+        paragraphs,
+        const BlindListenSettings(),
+      );
+      final playing = notifier.startPlaying();
+      await Future<void>.delayed(Duration.zero);
+
+      await engine.emitPosition(const Duration(seconds: 2));
+
+      expect(studyTimeService.sentencePlaybacks, hasLength(1));
+      final firstRecord = studyTimeService.sentencePlaybacks.single;
+      expect(firstRecord.duration, const Duration(seconds: 2));
+      expect(firstRecord.text, 'p0_s0');
+      expect(firstRecord.stage, StudyStage.blindListen);
+      expect(firstRecord.recordInputDuration, isFalse);
+
+      // 释放段落播放，成功结果会补齐没有单独 position 事件的尾句。
+      engine.release();
+      await playing;
+
+      expect(studyTimeService.sentencePlaybacks, hasLength(2));
+      final secondRecord = studyTimeService.sentencePlaybacks[1];
+      expect(secondRecord.duration, const Duration(seconds: 2));
+      expect(secondRecord.text, 'p0_s1');
+    });
+
+    test('中途暂停只提交已经完整播放的句子', () async {
+      final engine = _PositionDrivenBlindTestAudioEngine();
+      final studyTimeService = _RecordingStudyTimeService();
+      final container = _buildContainer(
+        engine: engine,
+        studyTimeService: studyTimeService,
+      );
+      addTearDown(() {
+        engine.release();
+        container.dispose();
+      });
+      final notifier = container.read(blindListenPlayerProvider.notifier);
+
+      await notifier.initializeParagraphs(
+        _buildParagraphs(paragraphCount: 1, sentencesPerParagraph: 2),
+        const BlindListenSettings(),
+      );
+      final playing = notifier.startPlaying();
+      await Future<void>.delayed(Duration.zero);
+
+      await engine.emitPosition(const Duration(seconds: 2));
+      await notifier.pause();
+
+      expect(studyTimeService.sentencePlaybacks, hasLength(1));
+      expect(studyTimeService.sentencePlaybacks.single.text, 'p0_s0');
+      engine.release();
+      await playing;
+    });
+
+    test('取消段落播放不提交输入统计', () async {
+      final engine = _PositionDrivenBlindTestAudioEngine();
+      final studyTimeService = _RecordingStudyTimeService();
+      final container = _buildContainer(
+        engine: engine,
+        studyTimeService: studyTimeService,
+      );
+      addTearDown(() {
+        engine.release();
+        container.dispose();
+      });
+      final notifier = container.read(blindListenPlayerProvider.notifier);
+
+      await notifier.initializeParagraphs(
+        _buildParagraphs(paragraphCount: 1, sentencesPerParagraph: 2),
+        const BlindListenSettings(),
+      );
+      final playing = notifier.startPlaying();
+      await Future<void>.delayed(Duration.zero);
+
+      await notifier.pause();
+
+      expect(studyTimeService.sentencePlaybacks, isEmpty);
+      engine.release();
+      await playing;
+    });
+
+    test('退出刷写总学习时长且重复销毁不重复写入', () async {
+      var now = DateTime(2026, 9, 12, 12);
+      await withClock(Clock(() => now), () async {
+        final engine = _FastTestAudioEngine();
+        final studyTimeService = _RecordingStudyTimeService();
+        final container = _buildContainer(
+          engine: engine,
+          studyTimeService: studyTimeService,
+        );
+        addTearDown(container.dispose);
+        final notifier = container.read(blindListenPlayerProvider.notifier);
+
+        await notifier.initializeParagraphs(
+          _buildParagraphs(paragraphCount: 1, sentencesPerParagraph: 1),
+          const BlindListenSettings(),
+        );
+        now = now.add(const Duration(seconds: 3));
+
+        await Future.wait([notifier.disposePlayer(), notifier.disposePlayer()]);
+
+        expect(studyTimeService.sessionDurations, hasLength(1));
+        final record = studyTimeService.sessionDurations.single;
+        expect(record.studyDuration, const Duration(seconds: 3));
+        expect(record.inputDuration, Duration.zero);
+        expect(record.stage, StudyStage.blindListen);
+      });
     });
   });
 
@@ -937,7 +1262,7 @@ void main() {
           ),
       ];
       // 断点恢复到第 3 句（段内 local 2）
-      notifier.initializeParagraphs(
+      await notifier.initializeParagraphs(
         [para],
         const BlindListenSettings(),
         startSentenceLocalIndex: 2,

@@ -46,6 +46,7 @@ import '../widgets/player_hotkey_scope.dart';
 import '../widgets/practice/practice_play_count_label.dart';
 import '../widgets/common/managed_media_visual_surface.dart';
 import '../widgets/common/practice_media_presentation_host.dart';
+import '../widgets/study/study_activity_detector.dart';
 
 /// 盲听播放器页面
 class BlindListenPlayerScreen extends ConsumerStatefulWidget {
@@ -106,7 +107,6 @@ class _BlindListenPlayerScreenState
         if (_isExiting || prev == null) return;
         _logBlindStateTransition(prev, next);
         if (!prev.stepFinished && next.stepFinished) {
-          ref.read(learningSessionProvider.notifier).pauseStudyTimer();
           shortenIdleTimeout(5);
           _handleCompleted();
         }
@@ -568,30 +568,35 @@ class _BlindListenPlayerScreenState
     final playerState = ref.read(blindListenPlayerProvider);
 
     final mediaReady = widget.mediaStartup == null || _mediaStartupReady;
-    return wakelockBody(
-      child: PracticeMediaPresentationHost(
-        enabled:
-            mediaReady &&
-            ref.read(learningSessionProvider).playbackChain ==
-                LearningPlaybackChain.media,
-        suppressVisualView: _isNavigatingToDetail,
-        audioItemId: widget.audioItemId,
-        isPlaying: playerState.isPlaying,
-        onPlayPause: () {
-          final player = ref.read(blindListenPlayerProvider.notifier);
-          playerState.isPlaying
-              ? unawaited(player.pause())
-              : unawaited(player.resume());
-        },
-        onSessionChanged: (session) => _mediaPresentationSession = session,
-        builder: (context, presentation, mediaSurface) => _buildParagraphMode(
-          context,
-          l10n,
-          theme,
-          playerState,
-          topContent: presentation.enabled ? mediaSurface : null,
-          bodyWrapper: _wrapMediaStartup,
-          fullscreenBody: presentation.expanded ? mediaSurface : null,
+    return StudyActivityDetector(
+      onActivity: ref
+          .read(blindListenPlayerProvider.notifier)
+          .markStudyActivity,
+      child: wakelockBody(
+        child: PracticeMediaPresentationHost(
+          enabled:
+              mediaReady &&
+              ref.read(learningSessionProvider).playbackChain ==
+                  LearningPlaybackChain.media,
+          suppressVisualView: _isNavigatingToDetail,
+          audioItemId: widget.audioItemId,
+          isPlaying: playerState.isPlaying,
+          onPlayPause: () {
+            final player = ref.read(blindListenPlayerProvider.notifier);
+            playerState.isPlaying
+                ? unawaited(player.pause())
+                : unawaited(player.resume());
+          },
+          onSessionChanged: (session) => _mediaPresentationSession = session,
+          builder: (context, presentation, mediaSurface) => _buildParagraphMode(
+            context,
+            l10n,
+            theme,
+            playerState,
+            topContent: presentation.enabled ? mediaSurface : null,
+            bodyWrapper: _wrapMediaStartup,
+            fullscreenBody: presentation.expanded ? mediaSurface : null,
+          ),
         ),
       ),
     );

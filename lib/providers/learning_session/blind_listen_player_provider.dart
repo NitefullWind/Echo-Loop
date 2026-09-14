@@ -22,12 +22,11 @@ import '../../models/blind_listen_settings.dart';
 import '../../models/sentence.dart';
 import '../../models/sentence_playback_result.dart';
 import '../../models/study_stage.dart';
-import '../../services/learned_vocabulary_tracker.dart';
 import '../../services/silence_skip_detector.dart';
-import '../../services/study_event_recorder.dart';
+import '../../services/study_session_timer.dart';
+import '../../services/study_time_service.dart';
 import '../../utils/word_counter.dart';
 import '../audio_engine/audio_engine_provider.dart';
-import '../learned_vocabulary_tracker_provider.dart';
 import '../learning_progress_provider.dart';
 import '../blind_listen_prefs_provider.dart';
 import '../listening_practice/bookmark_manager.dart';
@@ -180,8 +179,14 @@ class BlindListenPlayer extends _$BlindListenPlayer {
   /// 段切换 / 重听等场景下保持为 0，从段头开播。
   int _resumeStartLocalSentenceIndex = 0;
 
-  /// 学习事件记录器
-  late StudyEventRecorder _recorder;
+  /// 当前页面使用的学习统计服务。
+  late StudyTimeService _studyTimeService;
+
+  /// 全文盲听页面级学习计时器。
+  StudySessionTimer? _studySessionTimer;
+
+  /// 幂等退出收尾，避免路由退出和 Provider 销毁重复刷写统计。
+  Future<void>? _disposePlayerInFlight;
 
   /// position 监听（句子高亮）
   StreamSubscription<Duration>? _positionSub;
@@ -191,6 +196,15 @@ class BlindListenPlayer extends _$BlindListenPlayer {
 
   /// 当前 AudioEngine sessionId
   int _sessionId = -1;
+
+  /// 当前段落播放 session 下一个待记录的本地句子索引。
+  ///
+  /// 只在 position 跨过句尾或段落自然完成时推进，避免暂停、seek 和旧 session
+  /// 的迟到回调把未完整播放的句子写入输入统计。
+  int _nextStatsSentenceLocalIndex = 0;
+
+  /// 当前播放 session 开始时的句子索引，用于输出段落完成日志中的数量。
+  int _statsStartSentenceLocalIndex = 0;
 
   /// 默认保持音频驱动；视频入口在媒体加载成功后显式注入独立驱动。
   ParagraphPlaybackDriver? _playbackDriver;
@@ -216,17 +230,7 @@ class BlindListenPlayer extends _$BlindListenPlayer {
 
   @override
   BlindListenPlayerState build() {
-    LearnedVocabularyTracker? vocabTracker;
-    try {
-      vocabTracker = ref.read(learnedVocabularyTrackerProvider);
-    } catch (e) {
-      AppLogger.log('Player', '⚠ vocabTracker 不可用（测试环境？）: $e');
-    }
-    _recorder = StudyEventRecorder(
-      studyTimeService: ref.read(studyTimeServiceProvider),
-      vocabTracker: vocabTracker,
-      stage: StudyStage.blindListen,
-    );
+    _studyTimeService = ref.read(studyTimeServiceProvider);
 
     // 不再在进后台时暂停段间倒计时：后台连续性由静音保活（StudyBackgroundPlaybackMixin
     // 的 setSessionActive）保证，倒计时在后台照常推进，修复「分段只播第一段」。
@@ -234,6 +238,7 @@ class BlindListenPlayer extends _$BlindListenPlayer {
       _positionSub?.cancel();
       _invalidateCountdown();
       _silenceSkipEvents.close();
+      unawaited(_disposeStudySessionTimer());
     });
     return const BlindListenPlayerState();
   }
@@ -243,14 +248,18 @@ class BlindListenPlayer extends _$BlindListenPlayer {
   /// [startParagraphIndex] 断点续学段落索引，自动 clamp 到有效范围。
   /// [startSentenceLocalIndex] 段内本地句子 index，断点位于段中间时使用；
   ///   仅当对应段的时长 > 10s 时生效，且只用于首次播放该段。
-  void initializeParagraphs(
+  Future<void> initializeParagraphs(
     List<List<Sentence>> paragraphs,
     BlindListenSettings settings, {
     int startParagraphIndex = 0,
     int startSentenceLocalIndex = 0,
     String? settingsSlot,
     ParagraphPlaybackDriver? playbackDriver,
-  }) {
+  }) async {
+    if (_playbackDriver != null) {
+      await _cancelAll();
+    }
+    await _disposeStudySessionTimer();
     _playbackDriver = playbackDriver;
     _settingsSlot = settingsSlot;
     _cleanup();
@@ -278,6 +287,18 @@ class BlindListenPlayer extends _$BlindListenPlayer {
       settings: settings,
       bookmarkedSentenceIndices: preBookmarked,
     );
+
+    final timer = StudySessionTimer(
+      studyTimeService: _studyTimeService,
+      stage: StudyStage.blindListen,
+      activityGate: ref.read(studyActivityGateProvider),
+      // 全文盲听支持锁屏/后台连续播放，后台实际播放时仍应累计学习时长。
+      allowBackgroundPlayback: true,
+      idleTimeout: const Duration(minutes: 2),
+      logScope: 'BlindListenTimer',
+    );
+    _studySessionTimer = timer;
+    timer.start();
 
     // 锁屏控制：每任务绑定一次（上一段/下一段），整段任务期间始终可用；会话活跃度
     // （保活 + 图标）由 setSessionActive 在播放/停顿/暂停各入口单独维护。
@@ -350,6 +371,7 @@ class BlindListenPlayer extends _$BlindListenPlayer {
     // 第一时间快照，避免 stopPlayback 期间的异步事件污染 playingSentenceIndex
     final snapshotIdx = state.playingSentenceIndex;
     _sessionId = _playback.newSession();
+    _setStudyPlaybackActive(false);
     _positionSub?.cancel();
     _invalidateCountdown();
     // 会话内中断只暂停（非 idle），不 stop——stop 会广播 processingState=idle 触发
@@ -597,6 +619,7 @@ class BlindListenPlayer extends _$BlindListenPlayer {
 
     _waitAfterCurrentParagraph = false;
     _sessionId = _playback.newSession();
+    _setStudyPlaybackActive(false);
     _positionSub?.cancel();
     _invalidateCountdown();
     // 暂停（非 idle）不拆媒体会话，session 已失效（见 §7.14 / pause 同理）。
@@ -648,6 +671,7 @@ class BlindListenPlayer extends _$BlindListenPlayer {
     // 自动↔手动切换时，停在当前段落，取消一切异步操作并进入等待态。
     if (modeChanged) {
       _sessionId = _playback.newSession();
+      _setStudyPlaybackActive(false);
       _positionSub?.cancel();
       _invalidateCountdown();
       // 暂停（非 idle）不拆媒体会话，session 已失效（见 §7.14）。
@@ -701,12 +725,78 @@ class BlindListenPlayer extends _$BlindListenPlayer {
     );
   }
 
-  /// 释放资源
-  void disposePlayer() {
-    _playback.unbindLockScreen();
+  /// 标记全文盲听页面仍有用户活动，使页面级学习计时器恢复计时。
+  void markStudyActivity() => _studySessionTimer?.markActivity();
+
+  /// 将实际音频播放状态同步给页面级学习计时器，避免播放中被误判为空闲。
+  void _setStudyPlaybackActive(bool active) {
+    _studySessionTimer?.setPlaybackActive(active);
+  }
+
+  /// 全文盲听页面累计的有效学习时长，供退出埋点复用。
+  Duration get elapsed => _studySessionTimer?.elapsed ?? Duration.zero;
+
+  /// 结束全文盲听页面会话并刷写最终统计；重复调用共享同一次收尾操作。
+  Future<void> disposePlayer() {
+    final inFlight = _disposePlayerInFlight;
+    if (inFlight != null) return inFlight;
+
+    late final Future<void> tracked;
+    tracked = _disposePlayerInternal().whenComplete(() {
+      if (identical(_disposePlayerInFlight, tracked)) {
+        _disposePlayerInFlight = null;
+      }
+    });
+    _disposePlayerInFlight = tracked;
+    return tracked;
+  }
+
+  Future<void> _disposePlayerInternal() async {
+    AppLogger.log(
+      'BlindListenPlayer',
+      'disposePlayer: begin paragraphs=${_paragraphs.length} session=$_sessionId',
+    );
+    try {
+      if (_playbackDriver != null) {
+        await _cancelAll();
+      }
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'blind listen playback cancellation failed error=$error\n$stackTrace',
+      );
+    }
+    _playbackDriver?.unbindLockScreen();
+    final timer = _studySessionTimer;
+    _studySessionTimer = null;
+    try {
+      await timer?.dispose();
+    } catch (error, stackTrace) {
+      // 统计刷写失败不能阻断播放器与页面状态的清理。
+      AppLogger.log(
+        'StudyExit',
+        'blind listen timer flush failed error=$error\n$stackTrace',
+      );
+    }
     _cleanup();
+    _playbackDriver = null;
     _paragraphs = [];
     state = const BlindListenPlayerState();
+    AppLogger.log('BlindListenPlayer', 'disposePlayer: complete');
+  }
+
+  Future<void> _disposeStudySessionTimer() async {
+    final timer = _studySessionTimer;
+    _studySessionTimer = null;
+    if (timer == null) return;
+    try {
+      await timer.dispose();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'blind listen timer reset flush failed error=$error\n$stackTrace',
+      );
+    }
   }
 
   // ========== 内部方法 ==========
@@ -770,6 +860,8 @@ class BlindListenPlayer extends _$BlindListenPlayer {
     final playback = _playback;
     _sessionId = playback.newSession();
     final sid = _sessionId;
+    _nextStatsSentenceLocalIndex = startLocalIdx;
+    _statsStartSentenceLocalIndex = startLocalIdx;
 
     state = state.copyWith(
       hasCompletedCurrentParagraphPlayback: false,
@@ -783,6 +875,7 @@ class BlindListenPlayer extends _$BlindListenPlayer {
     // 进入活跃会话（含随后的段间倒计时，保活全程在跑）。回调槽已在 initializeParagraphs
     // 绑定一次，此处不再重绑。
     playback.setSessionActive(true);
+    _setStudyPlaybackActive(true);
     // 实际播放开始：解除停顿期的进度冻结，锁屏进度条恢复随播放前进。
     playback.setProgressFrozen(false);
 
@@ -801,20 +894,32 @@ class BlindListenPlayer extends _$BlindListenPlayer {
       onRangeReady: () => _startPositionTracking(sentences),
     );
 
-    if (result != SentencePlaybackResult.completed ||
-        !playback.isActiveSession(sid)) {
+    final sessionStillActive = playback.isActiveSession(sid);
+    if (!sessionStillActive) {
+      return;
+    }
+    if (result != SentencePlaybackResult.completed) {
+      _setStudyPlaybackActive(false);
       return;
     }
 
-    // 通过 recorder 记录听力时长、输入词数、已学词形
-    final paragraphWordCount = countWordsInSentences(sentences);
-    final durationMs =
-        (sentences.last.endTime - sentences.first.startTime).inMilliseconds;
-    final paragraphText = sentences.map((s) => s.text).join(' ');
-    _recorder.onInputCompleted(
-      durationMs: durationMs,
-      wordCount: paragraphWordCount,
-      text: paragraphText,
+    // 播放完成后只保留页面学习会话，输入时长由页面计时器落库。
+    _setStudyPlaybackActive(false);
+
+    // 某些播放器不会在段尾再发一条可用 position；自然完成结果本身足以证明
+    // 剩余句子完整播放，因此在这里补齐最后一句（或 position 跳过的多句）。
+    _recordCompletedSentencesThrough(
+      sentences,
+      sentences.last.endTime,
+      sessionId: sid,
+    );
+    AppLogger.log(
+      'BlindListenStats',
+      'event=paragraph_playback_completed '
+          'stage=${StudyStage.blindListen.name} '
+          'paragraph=${state.currentParagraphIndex} '
+          'repeat=${state.currentRepeatCount} session=$sid '
+          'completedSentenceCount=${_nextStatsSentenceLocalIndex - _statsStartSentenceLocalIndex}',
     );
 
     _positionSub?.cancel();
@@ -851,6 +956,43 @@ class BlindListenPlayer extends _$BlindListenPlayer {
     _startPauseCountdown();
   }
 
+  /// 记录当前播放 session 已经跨过句尾的所有句子。
+  ///
+  /// [position] 可能一次跨过多个句子，因此使用循环而不是只记录当前句；调用方
+  /// 已经完成 session 校验，这里仍保留 session 参数作为第二层竞态保护。
+  void _recordCompletedSentencesThrough(
+    List<Sentence> sentences,
+    Duration position, {
+    required int sessionId,
+  }) {
+    if (sessionId != _sessionId || !_playback.isActiveSession(sessionId)) {
+      return;
+    }
+
+    while (_nextStatsSentenceLocalIndex < sentences.length) {
+      final sentence = sentences[_nextStatsSentenceLocalIndex];
+      if (position < sentence.endTime) break;
+
+      _studyTimeService.submitSentencePlayback(
+        duration: sentence.duration,
+        text: sentence.text,
+        stage: StudyStage.blindListen,
+        recordInputDuration: false,
+      );
+      AppLogger.log(
+        'BlindListenStats',
+        'event=sentence_completed '
+            'stage=${StudyStage.blindListen.name} '
+            'paragraph=${state.currentParagraphIndex} '
+            'sentence=${sentence.index} '
+            'repeat=${state.currentRepeatCount} session=$sessionId '
+            'durationMs=${sentence.duration.inMilliseconds} '
+            'wordCount=${countWords(sentence.text)}',
+      );
+      _nextStatsSentenceLocalIndex += 1;
+    }
+  }
+
   /// 订阅 position stream，二分查找定位当前句子
   void _startPositionTracking(List<Sentence> sentences) {
     _positionSub?.cancel();
@@ -864,6 +1006,12 @@ class BlindListenPlayer extends _$BlindListenPlayer {
           position >= sentences.last.endTime) {
         return;
       }
+
+      _recordCompletedSentencesThrough(
+        sentences,
+        position,
+        sessionId: _sessionId,
+      );
 
       final idx = _findSentenceIndex(sentences, position);
       if (idx != state.playingSentenceIndex && idx >= 0) {
@@ -981,6 +1129,7 @@ class BlindListenPlayer extends _$BlindListenPlayer {
   /// 取消所有异步操作并停止音频
   Future<void> _cancelAll() async {
     _sessionId = _playback.newSession();
+    _setStudyPlaybackActive(false);
     _positionSub?.cancel();
     _invalidateCountdown();
     _waitAfterCurrentParagraph = false;

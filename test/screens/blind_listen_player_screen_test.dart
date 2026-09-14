@@ -36,9 +36,13 @@ class _StaticBlindListenPlayer extends TestBlindListenPlayer {
   _StaticBlindListenPlayer(super.initialState);
 
   VoidCallback? onStart;
+  int activityCalls = 0;
 
   @override
   Future<void> startPlaying() async => onStart?.call();
+
+  @override
+  void markStudyActivity() => activityCalls += 1;
 }
 
 class _MutableBlindListenPlayer extends _StaticBlindListenPlayer {
@@ -238,6 +242,23 @@ void main() {
         tester.getRect(toggleText).top,
         greaterThanOrEqualTo(tester.getRect(sentenceCard).bottom - 1),
       );
+    });
+
+    testWidgets('用户操作转发给页面学习计时器', (tester) async {
+      final player = _StaticBlindListenPlayer(
+        const BlindListenPlayerState(
+          currentParagraphIndex: 0,
+          totalParagraphs: 2,
+          currentRepeatCount: 1,
+        ),
+      );
+
+      await tester.pumpWidget(createTestWidget(playerFactory: (_) => player));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Peek at subtitles'));
+
+      expect(player.activityCalls, greaterThan(0));
     });
 
     testWidgets('倒计时阶段复用共享骨架并显示进度条', (tester) async {

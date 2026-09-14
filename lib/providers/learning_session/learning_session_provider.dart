@@ -276,7 +276,7 @@ class LearningSession extends _$LearningSession {
 
   /// 停止计时并保存已记录的学习时长
   ///
-  /// input/output 已由 StudyEventRecorder 事件驱动写入，无需周期保存。
+  /// 尚未迁移的旧学习任务通过事件记录器写入 input/output，无需周期保存。
   Future<void> _saveStudyTime() async {
     if (_isSaving) return;
     _isSaving = true;
@@ -431,7 +431,6 @@ class LearningSession extends _$LearningSession {
     BlindListenSettings? settings,
     LearningStage? stage,
   }) async {
-    _startStudyTimer();
     final practice = ref.read(listeningPracticeProvider.notifier);
     final currentSettings = ref.read(listeningPracticeProvider).settings;
 
@@ -492,7 +491,7 @@ class LearningSession extends _$LearningSession {
     );
 
     final blindPlayer = ref.read(blindListenPlayerProvider.notifier);
-    blindPlayer.initializeParagraphs(
+    await blindPlayer.initializeParagraphs(
       paragraphs,
       settings ?? const BlindListenSettings(),
       startParagraphIndex: startParagraphIndex,
@@ -586,7 +585,7 @@ class LearningSession extends _$LearningSession {
       playbackChain: LearningPlaybackChain.media,
       clearSavedSettings: true,
     );
-    ref
+    await ref
         .read(blindListenPlayerProvider.notifier)
         .initializeParagraphs(
           sessionParagraphs,
@@ -596,7 +595,6 @@ class LearningSession extends _$LearningSession {
           settingsSlot: stageSlotKey(StageSettingsSlots.blindListen, stage),
           playbackDriver: MediaParagraphPlaybackDriver(mediaEngine),
         );
-    _startStudyTimer();
     _trackSessionStart();
     return MediaLoadResult.ready;
   }
@@ -1301,8 +1299,16 @@ class LearningSession extends _$LearningSession {
     final intensivePlayer = mode == LearningMode.intensiveListen
         ? ref.read(intensiveListenPlayerProvider.notifier)
         : null;
-    _trackSessionEnd(durationMs: intensivePlayer?.elapsed.inMilliseconds);
-    if (mode != LearningMode.intensiveListen) {
+    final blindPlayer = mode == LearningMode.blindListen
+        ? ref.read(blindListenPlayerProvider.notifier)
+        : null;
+    _trackSessionEnd(
+      durationMs:
+          intensivePlayer?.elapsed.inMilliseconds ??
+          blindPlayer?.elapsed.inMilliseconds,
+    );
+    if (mode != LearningMode.intensiveListen &&
+        mode != LearningMode.blindListen) {
       _stopPeriodicSaveTimer();
       await _saveStudyTime();
     }
@@ -1324,9 +1330,7 @@ class LearningSession extends _$LearningSession {
       _mediaReviewDifficultEntryGeneration += 1;
     }
     if (mode == LearningMode.blindListen) {
-      final blindPlayer = ref.read(blindListenPlayerProvider.notifier);
-      await blindPlayer.pause();
-      blindPlayer.disposePlayer();
+      await blindPlayer?.disposePlayer();
     } else if (mode == LearningMode.intensiveListen) {
       // 释放精听播放器资源
       await intensivePlayer?.disposePlayer();

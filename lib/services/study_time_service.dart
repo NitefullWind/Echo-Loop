@@ -162,16 +162,23 @@ class StudyTimeService {
   }) {
     final eventDate = date ?? DateTime.now();
     final milliseconds = duration.inMilliseconds;
+    final inputWords = countWords(text);
     final wordForms = _extractWordForms(text, eventDate);
     return _enqueue(
       StudyStatisticsDelta(
         date: eventDate,
         stage: stage,
         inputTimeMilliseconds: recordInputDuration ? milliseconds : 0,
-        inputWords: countWords(text),
+        inputWords: inputWords,
         wordForms: wordForms,
       ),
-    );
+    ).then((_) {
+      AppLogger.log(
+        'StudyStatistics',
+        'event=input_persisted stage=${stage.name} '
+            'durationMs=$milliseconds inputWords=$inputWords',
+      );
+    });
   }
 
   /// 记录一次语音识别输出。

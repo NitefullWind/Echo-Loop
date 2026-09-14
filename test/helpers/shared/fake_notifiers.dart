@@ -1167,10 +1167,35 @@ class FakeBlindListenPlayer extends BlindListenPlayer {
   }
 
   @override
+  Future<void> initializeParagraphs(
+    List<List<Sentence>> paragraphs,
+    BlindListenSettings settings, {
+    int startParagraphIndex = 0,
+    int startSentenceLocalIndex = 0,
+    String? settingsSlot,
+    ParagraphPlaybackDriver? playbackDriver,
+  }) async {
+    final safeIndex = paragraphs.isEmpty
+        ? 0
+        : startParagraphIndex.clamp(0, paragraphs.length - 1);
+    final preBookmarked = <int>{
+      for (final paragraph in paragraphs)
+        for (final sentence in paragraph)
+          if (sentence.isBookmarked) sentence.index,
+    };
+    state = state.copyWith(
+      currentParagraphIndex: safeIndex,
+      totalParagraphs: paragraphs.length,
+      settings: settings,
+      bookmarkedSentenceIndices: preBookmarked,
+    );
+  }
+
+  @override
   Future<void> seekToSentence(int globalSentenceIndex) async {}
 
   @override
-  void disposePlayer() {
+  Future<void> disposePlayer() async {
     state = const BlindListenPlayerState();
   }
 

@@ -1,7 +1,5 @@
 import 'dart:async';
-import 'dart:ui';
 import 'package:drift/native.dart';
-import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -750,15 +748,13 @@ void main() {
 
   group('LearningSession App 生命周期计时', () {
     late ProviderContainer container;
-    late TestAudioEngine testAudioEngine;
 
     /// 创建带有所有依赖 override 的 ProviderContainer
-    ProviderContainer createContainer({bool isPlaying = false}) {
-      testAudioEngine = TestAudioEngine(isPlaying: isPlaying);
+    ProviderContainer createContainer() {
       final c = ProviderContainer(
         overrides: [
           appDatabaseProvider.overrideWithValue(_createTestDb()),
-          audioEngineProvider.overrideWith(() => testAudioEngine),
+          audioEngineProvider.overrideWith(() => TestAudioEngine()),
           listeningPracticeProvider.overrideWith(() => TestListeningPractice()),
           learningProgressNotifierProvider.overrideWith(
             () => TestLearningProgressNotifier(),
@@ -775,127 +771,13 @@ void main() {
     LearningSession session(ProviderContainer c) =>
         c.read(learningSessionProvider.notifier);
 
-    /// 模拟 App 进入后台（按 iOS 正确的状态转换顺序）
-    ///
-    /// resumed → inactive → hidden → paused
-    void simulateEnterBackground() {
-      final binding = TestWidgetsFlutterBinding.instance;
-      binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-      binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    }
+    tearDown(() => container.dispose());
 
-    /// 模拟 App 回到前台（按 iOS 正确的状态转换顺序）
-    ///
-    /// paused → hidden → inactive → resumed
-    void simulateEnterForeground() {
-      final binding = TestWidgetsFlutterBinding.instance;
-      binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-      binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    }
-
-    /// 模拟 App 进入 hidden 状态（多任务切换画面）
-    ///
-    /// resumed → inactive → hidden
-    void simulateEnterHidden() {
-      final binding = TestWidgetsFlutterBinding.instance;
-      binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-    }
-
-    tearDown(() {
-      container.dispose();
-      // 恢复到 resumed 状态，避免跨测试的生命周期状态残留
-      final binding = TestWidgetsFlutterBinding.instance;
-      try {
-        binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-      } catch (_) {}
-      try {
-        binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      } catch (_) {}
-      try {
-        binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-      } catch (_) {}
-    });
-
-    test('进入学习模式后计时器启动', () async {
+    test('盲听使用页面级计时器，不启动 LearningSession 旧计时器', () async {
       container = createContainer();
       final s = session(container);
 
       await s.enterBlindListenMode('audio-1', paragraphs: const []);
-
-      expect(s.isStudyTimerRunning, true);
-    });
-
-    test('进入后台且音频未播放 → 暂停计时', () async {
-      container = createContainer(isPlaying: false);
-      final s = session(container);
-
-      await s.enterBlindListenMode('audio-1', paragraphs: const []);
-      expect(s.isStudyTimerRunning, true);
-
-      // 模拟：音频未播放时切到后台
-      testAudioEngine.isPlaying = false;
-      simulateEnterBackground();
-
-      expect(s.isStudyTimerRunning, false);
-    });
-
-    test('进入后台且音频正在播放（盲听息屏）→ 暂停计时', () async {
-      container = createContainer(isPlaying: true);
-      final s = session(container);
-
-      await s.enterBlindListenMode('audio-1', paragraphs: const []);
-      expect(s.isStudyTimerRunning, true);
-
-      // 模拟：音频播放中息屏 → 统一暂停计时（不再区分是否有音频播放）
-      testAudioEngine.isPlaying = true;
-      simulateEnterBackground();
-
-      expect(s.isStudyTimerRunning, false);
-    });
-
-    test('回到前台且在学习模式 → 恢复计时', () async {
-      container = createContainer(isPlaying: false);
-      final s = session(container);
-
-      await s.enterBlindListenMode('audio-1', paragraphs: const []);
-
-      // 模拟：切到后台（音频未播放），计时暂停
-      testAudioEngine.isPlaying = false;
-      simulateEnterBackground();
-      expect(s.isStudyTimerRunning, false);
-
-      // 模拟：回到前台，计时恢复
-      simulateEnterForeground();
-      expect(s.isStudyTimerRunning, true);
-    });
-
-    test('回到前台但不在学习模式 → 不启动计时', () async {
-      container = createContainer();
-
-      // 读取 provider 以初始化（注册 AppLifecycleListener）
-      container.read(learningSessionProvider);
-      final s = session(container);
-
-      // 没有进入学习模式，直接模拟生命周期变化
-      simulateEnterBackground();
-      simulateEnterForeground();
-
-      expect(s.isStudyTimerRunning, false);
-    });
-
-    test('hidden 状态且音频未播放 → 暂停计时', () async {
-      container = createContainer(isPlaying: false);
-      final s = session(container);
-
-      await s.enterBlindListenMode('audio-1', paragraphs: const []);
-      expect(s.isStudyTimerRunning, true);
-
-      // hidden 状态（多任务切换画面）也应暂停
-      testAudioEngine.isPlaying = false;
-      simulateEnterHidden();
 
       expect(s.isStudyTimerRunning, false);
     });

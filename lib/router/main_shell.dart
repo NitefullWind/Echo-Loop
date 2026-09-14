@@ -530,7 +530,12 @@ class _MainShellState extends ConsumerState<MainShell> with RouteAware {
     ref.invalidate(studyDurationRecordsProvider);
     try {
       await ref.read(studyStatsNotifierProvider.notifier).refresh();
-      AppLogger.log('StudyRefresh', 'complete source=$source');
+      final stats = ref.read(studyStatsNotifierProvider).valueOrNull;
+      AppLogger.log(
+        'StudyRefresh',
+        'complete source=$source '
+            'todayInputWords=${stats?.todayInputWords ?? 'unknown'}',
+      );
     } catch (error, stackTrace) {
       AppLogger.log(
         'StudyRefresh',

@@ -93,7 +93,7 @@ void main() {
       ],
     ];
 
-    setUp(() {
+    setUp(() async {
       container = ProviderContainer(
         overrides: [
           audioEngineProvider.overrideWith(() => _TestAudioEngine()),
@@ -103,7 +103,7 @@ void main() {
         ],
       );
       notifier = container.read(blindListenPlayerProvider.notifier);
-      notifier.initializeParagraphs(
+      await notifier.initializeParagraphs(
         paragraphs,
         const BlindListenSettings(controlMode: ShadowingControlMode.manual),
       );
@@ -170,7 +170,7 @@ void main() {
       final delayedNotifier = delayedContainer.read(
         blindListenPlayerProvider.notifier,
       );
-      delayedNotifier.initializeParagraphs(
+      await delayedNotifier.initializeParagraphs(
         paragraphs,
         const BlindListenSettings(controlMode: ShadowingControlMode.auto),
       );
