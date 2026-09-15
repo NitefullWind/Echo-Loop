@@ -1111,9 +1111,6 @@ class FakeLearningSession extends LearningSession {
     state = const LearningSessionState();
   }
 
-  @override
-  void addOutputWords(int count) {}
-
   /// 直接设置 state（测试辅助方法）
   void setState(LearningSessionState newState) => state = newState;
 }
@@ -1795,14 +1792,14 @@ class FakeReviewDifficultPractice extends ReviewDifficultPractice {
   int get currentIndex => state.currentSentenceIndex;
 
   @override
-  void initialize(
+  Future<void> initialize(
     List<Sentence> sentences, {
     int startIndex = 0,
     DifficultPracticeSettings settings = const DifficultPracticeSettings(),
     String? settingsSlot,
     SentencePlaybackDriver? playbackDriver,
     bool usesMediaEngine = false,
-  }) {
+  }) async {
     testSentences = List.of(sentences);
     final validIndex = testSentences.isEmpty
         ? 0
@@ -1977,7 +1974,7 @@ class FakeReviewDifficultPractice extends ReviewDifficultPractice {
   }
 
   @override
-  void disposePlayer() {
+  Future<void> disposePlayer() async {
     testSentences = [];
     state = const ReviewDifficultPracticeState();
   }
@@ -2348,46 +2345,6 @@ class FakeStudyTimeService implements StudyTimeService {
   Future<int> getStudyTime(DateTime date) async => 0;
   @override
   Future<int> getTodayStudyTime() async => 0;
-  @override
-  Future<void> addStudyTime(
-    int seconds, {
-    DateTime? date,
-    StudyStage? stage,
-  }) async {}
-  @override
-  Future<void> addStudyDuration(
-    Duration duration, {
-    DateTime? date,
-    StudyStage? stage,
-  }) async {}
-  @override
-  Future<void> addInputWords(int count, {DateTime? date}) async {}
-  @override
-  Future<void> addOutputWords(int count, {DateTime? date}) async {}
-  @override
-  Future<void> addInputTime(
-    int seconds, {
-    DateTime? date,
-    StudyStage? stage,
-  }) async {}
-  @override
-  Future<void> addInputDuration(
-    Duration duration, {
-    DateTime? date,
-    StudyStage? stage,
-  }) async {}
-  @override
-  Future<void> addOutputTime(
-    int seconds, {
-    DateTime? date,
-    StudyStage? stage,
-  }) async {}
-  @override
-  Future<void> addOutputDuration(
-    Duration duration, {
-    DateTime? date,
-    StudyStage? stage,
-  }) async {}
   @override
   Future<void> recordActiveDuration(
     Duration duration, {

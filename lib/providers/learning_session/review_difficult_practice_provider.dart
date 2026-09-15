@@ -21,14 +21,13 @@ import '../../models/difficult_practice_settings.dart';
 import '../../models/sentence.dart';
 import '../../models/sentence_playback_result.dart';
 import '../../models/study_stage.dart';
-import '../../services/learned_vocabulary_tracker.dart';
-import '../../services/study_event_recorder.dart';
 import '../../services/app_logger.dart';
+import '../../services/study_session_timer.dart';
+import '../../services/study_time_service.dart';
 import '../audio_engine/foreground_audio_engine_provider.dart';
 import '../blind_flow/blind_practice_flow_engine.dart';
 import '../blind_flow/blind_practice_flow_phase.dart';
 import '../blind_flow/blind_practice_flow_state.dart';
-import '../learned_vocabulary_tracker_provider.dart';
 import '../learning_progress_provider.dart';
 import '../difficult_practice_prefs_provider.dart';
 import '../favorite_sentence_lifecycle_provider.dart';
@@ -219,8 +218,20 @@ class ReviewDifficultPractice extends _$ReviewDifficultPractice {
   /// 设置记忆 slot(子阶段×轮次);null 表示本次不记忆。
   String? _settingsSlot;
 
-  /// 学习事件记录器
-  late StudyEventRecorder _recorder;
+  /// 当前难句补练页面的学习统计服务。
+  late StudyTimeService _studyTimeService;
+
+  /// 当前页面级学习计时器。
+  StudySessionTimer? _studySessionTimer;
+
+  /// 幂等退出收尾，避免路由退出和 Provider 销毁重复刷写统计。
+  Future<void>? _disposePlayerInFlight;
+
+  /// 统计会话代际，防止旧播放或录音回调污染新会话。
+  int _studySessionGeneration = 0;
+
+  /// 录音控制器实例；保存后可在 Provider 销毁阶段完成异步收尾，避免再次读取 ref。
+  late final SpeechRecordingController _speechController;
 
   /// 当前会话句子播放驱动；音频与视频共用同一练习状态机。
   late SentencePlaybackDriver _playback;
@@ -244,17 +255,8 @@ class ReviewDifficultPractice extends _$ReviewDifficultPractice {
 
   @override
   ReviewDifficultPracticeState build() {
-    LearnedVocabularyTracker? vocabTracker;
-    try {
-      vocabTracker = ref.read(learnedVocabularyTrackerProvider);
-    } catch (e) {
-      AppLogger.log('Player', '⚠ vocabTracker 不可用（测试环境？）: $e');
-    }
-    _recorder = StudyEventRecorder(
-      studyTimeService: ref.read(studyTimeServiceProvider),
-      vocabTracker: vocabTracker,
-      stage: StudyStage.reviewDifficultPractice,
-    );
+    _studyTimeService = ref.read(studyTimeServiceProvider);
+    _speechController = ref.read(speechRecordingControllerProvider.notifier);
 
     _playback = ForegroundSentencePlaybackDriver(
       ref.read(foregroundAudioEngineProvider.notifier),
@@ -265,9 +267,7 @@ class ReviewDifficultPractice extends _$ReviewDifficultPractice {
     ref.listen(speechRecordingControllerProvider, _onRecordingStateChanged);
 
     ref.onDispose(() {
-      unawaited(_playback.invalidateSession());
-      _blindEngine.dispose();
-      _repeatEngine?.dispose();
+      unawaited(_disposePlayerOnProviderDispose());
     });
     return const ReviewDifficultPracticeState();
   }
@@ -277,16 +277,18 @@ class ReviewDifficultPractice extends _$ReviewDifficultPractice {
   /// [playbackSpeed] 入口 briefing 中用户选择的初始播放速度，默认 1.0x。
   /// [pauseMultiplier] 入口 briefing 中选择的句间停顿；-1.0 = 自动（smart 模式），
   ///   其余正数走 multiplier 模式。
-  void initialize(
+  Future<void> initialize(
     List<Sentence> sentences, {
     int startIndex = 0,
     DifficultPracticeSettings settings = const DifficultPracticeSettings(),
     String? settingsSlot,
     SentencePlaybackDriver? playbackDriver,
     bool usesMediaEngine = false,
-  }) {
+  }) async {
+    _studySessionGeneration += 1;
+    await _disposeStudySessionTimer();
     _settingsSlot = settingsSlot;
-    unawaited(_playback.invalidateSession());
+    await _playback.invalidateSession();
     _playback =
         playbackDriver ??
         ForegroundSentencePlaybackDriver(
@@ -315,13 +317,38 @@ class ReviewDifficultPractice extends _$ReviewDifficultPractice {
       EventParams.totalDifficultSentences: _sentences.length,
     });
 
-    // 注入 recorder
-    ref.read(speechRecordingControllerProvider.notifier).setRecorder(_recorder);
-    // 也注入到前台引擎（盲听/跟读子流程都经前台引擎播放原句，不上锁屏）。
-    if (!usesMediaEngine) {
-      ref.read(foregroundAudioEngineProvider.notifier).setRecorder(_recorder);
-    }
+    final sessionGeneration = _studySessionGeneration;
+    _speechController.setRecordingCompletionHandler(
+      (duration) => _recordSpeechRecognition(duration, sessionGeneration),
+    );
+
+    final timer = StudySessionTimer(
+      studyTimeService: _studyTimeService,
+      stage: StudyStage.reviewDifficultPractice,
+      activityGate: ref.read(studyActivityGateProvider),
+      idleTimeout: const Duration(minutes: 2),
+      logScope: 'ReviewDifficultPracticeTimer',
+    );
+    _studySessionTimer = timer;
+    timer.start();
+    AppLogger.log(
+      'ReviewDifficultPracticeStats',
+      'session.ready sentenceCount=${_sentences.length} '
+          'usesMediaEngine=$usesMediaEngine',
+    );
   }
+
+  /// 标记页面上的用户活动，供 [StudyActivityDetector] 调用。
+  void markStudyActivity() => _studySessionTimer?.markActivity();
+
+  /// 暂停完成弹窗期间的页面学习计时。
+  void pauseStudySession() => _studySessionTimer?.pause();
+
+  /// 恢复完成弹窗关闭或重新练习后的页面学习计时。
+  void resumeStudySession() => _studySessionTimer?.resume();
+
+  /// 当前页面累计的有效学习时长，供学习会话埋点使用。
+  Duration get elapsed => _studySessionTimer?.elapsed ?? Duration.zero;
 
   /// 更新设置并重新开始当前句
   Future<void> updateSettings(DifficultPracticeSettings newSettings) async {
@@ -638,18 +665,136 @@ class ReviewDifficultPractice extends _$ReviewDifficultPractice {
     );
   }
 
-  /// 释放资源
-  void disposePlayer() {
-    ref.read(speechRecordingControllerProvider.notifier).setRecorder(null);
-    if (!state.usesMediaEngine) {
-      ref.read(foregroundAudioEngineProvider.notifier).setRecorder(null);
+  /// 释放播放器、页面计时器并等待统计队列刷写完成。
+  Future<void> disposePlayer() {
+    final inFlight = _disposePlayerInFlight;
+    if (inFlight != null) return inFlight;
+
+    late final Future<void> operation;
+    operation = _disposePlayerInternal().whenComplete(() {
+      if (identical(_disposePlayerInFlight, operation)) {
+        _disposePlayerInFlight = null;
+      }
+    });
+    _disposePlayerInFlight = operation;
+    return operation;
+  }
+
+  Future<void> _disposePlayerInternal() async {
+    _studySessionGeneration += 1;
+    _speechController.setRecordingCompletionHandler(null);
+
+    try {
+      await _playback.invalidateSession();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'review difficult practice playback cleanup failed '
+            'error=$error\n$stackTrace',
+      );
     }
-    unawaited(_playback.invalidateSession());
     _blindEngine.stopSession();
     _repeatEngine?.dispose();
     _repeatEngine = null;
+
+    await _disposeStudySessionTimer();
+    try {
+      await _studyTimeService.flush();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'review difficult practice statistics flush failed '
+            'error=$error\n$stackTrace',
+      );
+    }
+
     _sentences = [];
     state = const ReviewDifficultPracticeState();
+    AppLogger.log('ReviewDifficultPractice', 'disposePlayer: complete');
+  }
+
+  /// 释放当前页面计时器；初始化新会话时复用此方法，避免计时器泄漏。
+  Future<void> _disposeStudySessionTimer() async {
+    final timer = _studySessionTimer;
+    _studySessionTimer = null;
+    if (timer == null) return;
+    try {
+      await timer.dispose();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'review difficult practice timer cleanup failed '
+            'error=$error\n$stackTrace',
+      );
+    }
+  }
+
+  /// Provider 被动销毁时兜底释放播放资源并刷写统计，不再访问已销毁的 ref。
+  Future<void> _disposePlayerOnProviderDispose() async {
+    _studySessionGeneration += 1;
+    _speechController.setRecordingCompletionHandler(null);
+    _blindEngine.dispose();
+    _repeatEngine?.dispose();
+    _repeatEngine = null;
+    try {
+      await _playback.invalidateSession();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'review difficult practice provider playback cleanup failed '
+            'error=$error\n$stackTrace',
+      );
+    }
+    await _disposeStudySessionTimer();
+    try {
+      await _studyTimeService.flush();
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'StudyExit',
+        'review difficult practice provider statistics flush failed '
+            'error=$error\n$stackTrace',
+      );
+    }
+  }
+
+  /// 记录一次完整句子播放的输入统计。
+  void _recordSentencePlayback(Sentence sentence) {
+    AppLogger.log(
+      'ReviewDifficultPracticeStats',
+      'sentencePlayback.submit stage=${StudyStage.reviewDifficultPractice.name} '
+          'sentenceIndex=${sentence.index} '
+          'durationMs=${sentence.duration.inMilliseconds}',
+    );
+    _studyTimeService.submitSentencePlayback(
+      duration: sentence.duration,
+      text: sentence.text,
+      stage: StudyStage.reviewDifficultPractice,
+    );
+  }
+
+  /// 记录一次有效跟读录音，并丢弃退出后的迟到回调。
+  void _recordSpeechRecognition(Duration duration, int sessionGeneration) {
+    if (sessionGeneration != _studySessionGeneration ||
+        _studySessionTimer == null) {
+      AppLogger.log(
+        'ReviewDifficultPracticeStats',
+        'speechRecognition.discarded durationMs=${duration.inMilliseconds} '
+            'callbackGeneration=$sessionGeneration '
+            'currentGeneration=$_studySessionGeneration '
+            'hasTimer=${_studySessionTimer != null}',
+      );
+      return;
+    }
+    AppLogger.log(
+      'ReviewDifficultPracticeStats',
+      'speechRecognition.submit '
+          'stage=${StudyStage.reviewDifficultPractice.name} '
+          'durationMs=${duration.inMilliseconds} generation=$sessionGeneration',
+    );
+    _studyTimeService.submitSpeechRecognition(
+      duration: duration,
+      stage: StudyStage.reviewDifficultPractice,
+    );
   }
 
   /// 重置到第一句
@@ -794,10 +939,9 @@ class ReviewDifficultPractice extends _$ReviewDifficultPractice {
     final sessionId = playback.newSession();
     await playback.setSpeed(state.settings.playbackSpeed);
     final result = await playback.playSentence(sentence, sessionId);
-    if (!playback.recordsStudyEventsInternally &&
-        result == SentencePlaybackResult.completed &&
+    if (result == SentencePlaybackResult.completed &&
         playback.isActiveSession(sessionId)) {
-      _recorder.onSentencePlayed(sentence);
+      _recordSentencePlayback(sentence);
     }
     return result;
   }
@@ -863,7 +1007,7 @@ class ReviewDifficultPractice extends _$ReviewDifficultPractice {
             listenAndRepeatPauseCalculator(sentence.duration),
         getSentenceIntervalDuration: (sentence) =>
             state.settings.calculateInterSentencePause(sentence.duration),
-        onSentencePlayed: _recorder.onSentencePlayed,
+        onSentencePlayed: _recordSentencePlayback,
         isManualMode: () => state.isManualMode,
       ),
     );

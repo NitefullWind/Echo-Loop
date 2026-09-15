@@ -8,7 +8,6 @@ import '../../models/audio_engine_state.dart';
 import '../../models/audio_item.dart' as model;
 import '../../models/sentence.dart';
 import '../../services/app_logger.dart';
-import '../../services/study_event_recorder.dart';
 import '../../services/subtitle_parser.dart';
 
 part 'foreground_audio_engine_provider.g.dart';
@@ -28,14 +27,6 @@ part 'foreground_audio_engine_provider.g.dart';
 /// `playToEnd`（媒体会话/整篇循环专属）。
 @Riverpod(keepAlive: true)
 class ForegroundAudioEngine extends _$ForegroundAudioEngine {
-  /// 学习事件记录器（由仍使用旧统计链路的前台任务注入，退出时传 null）
-  StudyEventRecorder? _recorder;
-
-  /// 设置学习事件记录器。
-  void setRecorder(StudyEventRecorder? recorder) {
-    _recorder = recorder;
-  }
-
   /// 裸播放器——独立实例，从不注册到 `audio_service`。
   final ja.AudioPlayer _player = ja.AudioPlayer();
 
@@ -302,10 +293,6 @@ class ForegroundAudioEngine extends _$ForegroundAudioEngine {
           !isActiveSession(sessionId) ||
           s.processingState == ja.ProcessingState.completed,
     );
-
-    if (isActiveSession(sessionId)) {
-      _recorder?.onSentencePlayed(sentence);
-    }
   }
 
   /// 按句播放若干遍（同 [AudioEngine.playClipWithLoops]）。

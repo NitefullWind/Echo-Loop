@@ -7,7 +7,6 @@ library;
 
 import 'dart:async';
 import 'dart:math' show min;
-import 'package:flutter/widgets.dart';
 import 'package:just_audio/just_audio.dart' as ja;
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../analytics/analytics_providers.dart';
@@ -24,8 +23,6 @@ import '../../models/playback_settings.dart';
 import '../../models/retell_settings.dart';
 import '../../models/sentence.dart';
 import '../../database/providers.dart';
-import '../../models/study_stage.dart';
-import '../../services/study_time_service.dart';
 import '../daily_study_time_provider.dart';
 import '../../services/learned_vocabulary_tracker.dart';
 import '../learned_vocabulary_tracker_provider.dart';
@@ -213,117 +210,12 @@ class LearningSession extends _$LearningSession {
   /// 视频难句补练进入流程 generation；取消、重试或退出会使旧结果失效。
   int _mediaReviewDifficultEntryGeneration = 0;
 
-  /// 学习计时器，进入学习模式时启动，退出时停止
-  final Stopwatch _studyStopwatch = Stopwatch();
-
-  /// 周期保存定时器（每 _maxSessionSeconds 自动保存并重置计时器）
-  Timer? _periodicSaveTimer;
-
-  /// 学习计时器是否正在运行（仅用于测试验证）
-  @visibleForTesting
-  bool get isStudyTimerRunning => _studyStopwatch.isRunning;
-
-  /// App 生命周期监听器，用于在后台暂停计时
-  late AppLifecycleListener _lifecycleListener;
-
-  /// 学习时长存储服务
-  late StudyTimeService _studyTimeService;
-
   @override
   LearningSessionState build() {
-    _studyTimeService = ref.read(studyTimeServiceProvider);
-    _lifecycleListener = AppLifecycleListener(
-      onStateChange: _onAppLifecycleStateChanged,
-    );
     ref.onDispose(() {
       _playerStateSub?.cancel();
-      _periodicSaveTimer?.cancel();
-      _saveStudyTime();
-      _lifecycleListener.dispose();
     });
     return const LearningSessionState();
-  }
-
-  /// App 生命周期变化时暂停/恢复计时
-  ///
-  /// - 进入后台：暂停所有计时器 + 取消周期保存（用户不在看，不计入学习时长）
-  /// - 回到前台：恢复计时 + 重新调度周期保存
-  void _onAppLifecycleStateChanged(AppLifecycleState lifecycleState) {
-    if (lifecycleState == AppLifecycleState.paused ||
-        lifecycleState == AppLifecycleState.hidden) {
-      _studyStopwatch.stop();
-      _stopPeriodicSaveTimer();
-    } else if (lifecycleState == AppLifecycleState.resumed) {
-      if (state.isInLearningMode && !_studyStopwatch.isRunning) {
-        _studyStopwatch.start();
-        _schedulePeriodicSave();
-      }
-    }
-  }
-
-  /// 单次会话最大计入时长（防止用户睡着等异常场景）
-  static const _maxSessionSeconds = 5 * 60; // 5 分钟
-
-  /// 当前学习模式对应的 StudyStage（用于阶段明细双写）
-  StudyStage? get _currentStage => switch (state.learningMode) {
-    LearningMode.blindListen => StudyStage.blindListen,
-    LearningMode.intensiveListen => StudyStage.intensiveListen,
-    LearningMode.listenAndRepeat => StudyStage.listenAndRepeat,
-    LearningMode.retell => StudyStage.retell,
-    LearningMode.reviewDifficultPractice => StudyStage.reviewDifficultPractice,
-    null => null,
-  };
-
-  /// 停止计时并保存已记录的学习时长
-  ///
-  /// 尚未迁移的旧学习任务通过事件记录器写入 input/output，无需周期保存。
-  Future<void> _saveStudyTime() async {
-    if (_isSaving) return;
-    _isSaving = true;
-    try {
-      if (!_studyStopwatch.isRunning &&
-          _studyStopwatch.elapsed == Duration.zero) {
-        return;
-      }
-      _studyStopwatch.stop();
-      final seconds = _studyStopwatch.elapsed.inSeconds.clamp(
-        0,
-        _maxSessionSeconds,
-      );
-      _studyStopwatch.reset();
-      if (seconds > 0) {
-        await _studyTimeService.addStudyTime(seconds, stage: _currentStage);
-      }
-    } finally {
-      _isSaving = false;
-    }
-  }
-
-  /// 是否正在执行保存（防止 timer 回调与 exit 竞态）
-  bool _isSaving = false;
-
-  /// 启动学习计时（含周期保存定时器）
-  void _startStudyTimer() {
-    _studyStopwatch.reset();
-    _studyStopwatch.start();
-    _schedulePeriodicSave();
-  }
-
-  /// 调度下一次周期保存（one-shot Timer，避免 periodic 的 async 竞态）
-  void _schedulePeriodicSave() {
-    _periodicSaveTimer?.cancel();
-    _periodicSaveTimer = Timer(
-      const Duration(seconds: _maxSessionSeconds),
-      () async {
-        if (_isSaving || !state.isInLearningMode) return;
-        await _saveStudyTime();
-        // 保存后如果仍在学习模式，重新启动计时并调度下一次
-        if (state.isInLearningMode) {
-          _studyStopwatch.start();
-          _schedulePeriodicSave();
-        }
-      },
-    );
   }
 
   /// 上报 session_start 事件
@@ -344,31 +236,9 @@ class LearningSession extends _$LearningSession {
       ...ref.audioEventParams(state.audioItemId),
       if (state.learningMode != null)
         EventParams.stage: state.learningMode!.name,
-      EventParams.durationMs: durationMs ?? _studyStopwatch.elapsedMilliseconds,
+      EventParams.durationMs: durationMs ?? 0,
       EventParams.isFreePractice: state.isFreePlay ? 1 : 0,
     });
-  }
-
-  /// 停止周期保存定时器
-  void _stopPeriodicSaveTimer() {
-    _periodicSaveTimer?.cancel();
-    _periodicSaveTimer = null;
-  }
-
-  /// 暂停学习计时（步骤完成后调用，防止完成弹窗期间白跑时长）
-  void pauseStudyTimer() {
-    _studyStopwatch.stop();
-    _stopPeriodicSaveTimer();
-  }
-
-  /// 立即持久化输出词数（每完成一次跟读/复述调用，不丢数据）
-  ///
-  /// 学习期间 study tab 不可见，无需实时刷新统计 UI。
-  /// 退出学习模式时 `exitLearningMode()` 会统一刷新。
-  void addOutputWords(int count) {
-    if (count > 0) {
-      _studyTimeService.addOutputWords(count);
-    }
   }
 
   /// 测试环境可能未注入数据库，此时跳过词形统计即可。
@@ -815,7 +685,6 @@ class LearningSession extends _$LearningSession {
     bool isFreePlay = false,
     double playbackSpeed = 1.0,
   }) async {
-    _startStudyTimer();
     final practice = ref.read(listeningPracticeProvider.notifier);
     final currentSettings = ref.read(listeningPracticeProvider).settings;
 
@@ -1114,7 +983,6 @@ class LearningSession extends _$LearningSession {
     DifficultPracticeSettings settings = const DifficultPracticeSettings(),
     LearningStage? stage,
   }) async {
-    _startStudyTimer();
     final practice = ref.read(listeningPracticeProvider.notifier);
     final currentSettings = ref.read(listeningPracticeProvider).settings;
 
@@ -1167,7 +1035,7 @@ class LearningSession extends _$LearningSession {
 
     // 初始化难句补练播放器（传入断点索引 + 入口选择的播放速度 + 句间停顿）
     final player = ref.read(reviewDifficultPracticeProvider.notifier);
-    player.initialize(
+    await player.initialize(
       difficultSentences,
       startIndex: startIndex,
       settings: settings,
@@ -1252,7 +1120,7 @@ class LearningSession extends _$LearningSession {
       clearSavedSettings: true,
     );
 
-    ref
+    await ref
         .read(reviewDifficultPracticeProvider.notifier)
         .initialize(
           difficultSentences,
@@ -1270,7 +1138,6 @@ class LearningSession extends _$LearningSession {
       return MediaLoadResult.cancelled;
     }
 
-    _startStudyTimer();
     _trackSessionStart();
     AppLogger.log(
       'Session',
@@ -1303,18 +1170,16 @@ class LearningSession extends _$LearningSession {
     final retellPlayer = mode == LearningMode.retell
         ? ref.read(retellPlayerProvider.notifier)
         : null;
+    final difficultPracticePlayer = mode == LearningMode.reviewDifficultPractice
+        ? ref.read(reviewDifficultPracticeProvider.notifier)
+        : null;
     _trackSessionEnd(
       durationMs:
           intensivePlayer?.elapsed.inMilliseconds ??
           blindPlayer?.elapsed.inMilliseconds ??
-          retellPlayer?.elapsed.inMilliseconds,
+          retellPlayer?.elapsed.inMilliseconds ??
+          difficultPracticePlayer?.elapsed.inMilliseconds,
     );
-    if (mode != LearningMode.intensiveListen &&
-        mode != LearningMode.blindListen &&
-        mode != LearningMode.retell) {
-      _stopPeriodicSaveTimer();
-      await _saveStudyTime();
-    }
     AppLogger.log(
       'Session',
       'exitLearningMode: begin mode=$mode chain=${state.playbackChain}',
@@ -1344,8 +1209,7 @@ class LearningSession extends _$LearningSession {
       await retellPlayer?.disposePlayer();
     } else if (mode == LearningMode.reviewDifficultPractice) {
       // 释放难句补练播放器资源
-      final player = ref.read(reviewDifficultPracticeProvider.notifier);
-      player.disposePlayer();
+      await difficultPracticePlayer?.disposePlayer();
     }
 
     // 录音控制器属于录音任务本身，音频和视频退出都必须先完整复位。

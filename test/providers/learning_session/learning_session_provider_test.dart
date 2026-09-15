@@ -614,7 +614,6 @@ void main() {
       expect(await entry, MediaLoadResult.cancelled);
       expect(mediaEngine.releaseCalls, 1);
       expect(container.read(learningSessionProvider).isInLearningMode, isFalse);
-      expect(session.isStudyTimerRunning, isFalse);
     });
 
     test('视频盲听旧加载不能释放后一次进入的媒体会话', () async {
@@ -778,8 +777,6 @@ void main() {
       final s = session(container);
 
       await s.enterBlindListenMode('audio-1', paragraphs: const []);
-
-      expect(s.isStudyTimerRunning, false);
     });
   });
 
@@ -981,7 +978,6 @@ void main() {
       expect(await entry, MediaLoadResult.cancelled);
       expect(mediaEngine.releaseCalls, 1);
       expect(container.read(learningSessionProvider).isInLearningMode, isFalse);
-      expect(session.isStudyTimerRunning, isFalse);
     });
 
     test('复述正常学习从头开始，忽略遗留断点', () async {

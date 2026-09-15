@@ -68,90 +68,6 @@ class StudyTimeService {
     );
   }
 
-  // 旧学习任务仍通过 StudyEventRecorder 使用这些入口。它们保留为兼容适配，
-  // 内部统一进入新的 FIFO + 单事务写入链路，后续任务迁移时可逐步移除。
-
-  /// 按秒累加总学习时长；[stage] 为空时只写日总量。
-  Future<void> addStudyTime(int seconds, {DateTime? date, StudyStage? stage}) =>
-      addStudyDuration(
-        Duration(seconds: seconds),
-        date: date,
-        stage: stage,
-      );
-
-  /// 按毫秒累加总学习时长；[stage] 为空时只写日总量。
-  Future<void> addStudyDuration(
-    Duration duration, {
-    DateTime? date,
-    StudyStage? stage,
-  }) {
-    if (duration <= Duration.zero) return Future<void>.value();
-    return _enqueueLegacyDelta(
-      date: date,
-      stage: stage,
-      studyTimeMilliseconds: duration.inMilliseconds,
-    );
-  }
-
-  /// 累加输入词数。
-  Future<void> addInputWords(int count, {DateTime? date}) {
-    if (count <= 0) return Future<void>.value();
-    return _enqueueLegacyDelta(date: date, inputWords: count);
-  }
-
-  /// 累加输出词数。
-  Future<void> addOutputWords(int count, {DateTime? date}) {
-    if (count <= 0) return Future<void>.value();
-    return _enqueueLegacyDelta(date: date, outputWords: count);
-  }
-
-  /// 按秒累加输入时长；[stage] 为空时只写日总量。
-  Future<void> addInputTime(int seconds, {DateTime? date, StudyStage? stage}) =>
-      addInputDuration(
-        Duration(seconds: seconds),
-        date: date,
-        stage: stage,
-      );
-
-  /// 按毫秒累加输入时长；[stage] 为空时只写日总量。
-  Future<void> addInputDuration(
-    Duration duration, {
-    DateTime? date,
-    StudyStage? stage,
-  }) {
-    if (duration <= Duration.zero) return Future<void>.value();
-    return _enqueueLegacyDelta(
-      date: date,
-      stage: stage,
-      inputTimeMilliseconds: duration.inMilliseconds,
-    );
-  }
-
-  /// 按秒累加输出时长；[stage] 为空时只写日总量。
-  Future<void> addOutputTime(
-    int seconds, {
-    DateTime? date,
-    StudyStage? stage,
-  }) => addOutputDuration(
-    Duration(seconds: seconds),
-    date: date,
-    stage: stage,
-  );
-
-  /// 按毫秒累加输出时长；[stage] 为空时只写日总量。
-  Future<void> addOutputDuration(
-    Duration duration, {
-    DateTime? date,
-    StudyStage? stage,
-  }) {
-    if (duration <= Duration.zero) return Future<void>.value();
-    return _enqueueLegacyDelta(
-      date: date,
-      stage: stage,
-      outputTimeMilliseconds: duration.inMilliseconds,
-    );
-  }
-
   /// 记录按句播放；词数和词形由服务统一从文本提取。
   Future<void> recordSentencePlayback({
     required Duration duration,
@@ -321,29 +237,6 @@ class StudyTimeService {
     });
     _queueTail = event.catchError((Object _) {});
     return result.future;
-  }
-
-  Future<void> _enqueueLegacyDelta({
-    DateTime? date,
-    StudyStage? stage,
-    int studyTimeMilliseconds = 0,
-    int inputTimeMilliseconds = 0,
-    int outputTimeMilliseconds = 0,
-    int inputWords = 0,
-    int outputWords = 0,
-  }) {
-    return _enqueue(
-      StudyStatisticsDelta(
-        date: date ?? DateTime.now(),
-        // 旧的仅日总量事件不会写阶段表，因此这里的占位阶段不会产生副作用。
-        stage: stage ?? StudyStage.freePlayer,
-        studyTimeMilliseconds: studyTimeMilliseconds,
-        inputTimeMilliseconds: inputTimeMilliseconds,
-        outputTimeMilliseconds: outputTimeMilliseconds,
-        inputWords: inputWords,
-        outputWords: outputWords,
-      ),
-    );
   }
 
   Future<T> _afterWrites<T>(Future<T> Function() query) async {

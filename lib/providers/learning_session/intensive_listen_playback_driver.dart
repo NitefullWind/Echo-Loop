@@ -16,9 +16,6 @@ abstract interface class SentencePlaybackDriver {
   /// 立即使当前播放失效并暂停底层引擎，迟到回调不得继续推进业务状态。
   Future<void> invalidateSession();
 
-  /// 底层是否已负责记录成功播放的学习事件。
-  bool get recordsStudyEventsInternally;
-
   Future<void> pause();
   Future<void> setSpeed(double speed);
   Future<SentencePlaybackResult> playSentence(Sentence sentence, int sessionId);
@@ -56,9 +53,6 @@ class ForegroundSentencePlaybackDriver implements SentencePlaybackDriver {
   ForegroundSentencePlaybackDriver(this._engine);
 
   final ForegroundAudioEngine _engine;
-
-  @override
-  bool get recordsStudyEventsInternally => true;
 
   @override
   int newSession() => _engine.newSession();
@@ -122,9 +116,6 @@ class AudioIntensiveListenPlaybackDriver
   AudioIntensiveListenPlaybackDriver(this._engine);
 
   final AudioEngine _engine;
-
-  @override
-  bool get recordsStudyEventsInternally => true;
 
   @override
   int newSession() => _engine.newSession();
@@ -218,9 +209,6 @@ class MediaSentencePlaybackDriver implements IntensiveListenPlaybackDriver {
 
   final MediaEngine _engine;
   double _playbackSpeed = 1.0;
-
-  @override
-  bool get recordsStudyEventsInternally => false;
 
   @override
   int newSession() => _engine.newSession();

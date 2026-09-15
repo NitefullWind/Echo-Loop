@@ -11,6 +11,7 @@ import 'package:echo_loop/models/intensive_listen_settings.dart';
 import 'package:echo_loop/models/learning_progress.dart';
 import 'package:echo_loop/models/sentence.dart';
 import 'package:echo_loop/models/sentence_playback_result.dart';
+import 'package:echo_loop/models/study_stage.dart';
 import 'package:echo_loop/providers/audio_engine/foreground_audio_engine_provider.dart';
 import 'package:echo_loop/providers/blind_flow/blind_practice_flow_phase.dart';
 import 'package:echo_loop/providers/learning_progress_provider.dart';
@@ -98,9 +99,6 @@ class _RecordingLearningProgressNotifier extends TestLearningProgressNotifier {
 
 class _PassiveLearningSession extends TestLearningSession {
   _PassiveLearningSession(super.initialState);
-
-  @override
-  void addOutputWords(int count) {}
 }
 
 class _RecordingPlaybackDriver implements SentencePlaybackDriver {
@@ -108,9 +106,6 @@ class _RecordingPlaybackDriver implements SentencePlaybackDriver {
   int pauseCalls = 0;
   final List<double> speeds = [];
   final List<Sentence> playedSentences = [];
-
-  @override
-  bool get recordsStudyEventsInternally => false;
 
   @override
   int newSession() => ++_sessionId;
@@ -180,9 +175,6 @@ class _ControlledPlaybackDriver implements SentencePlaybackDriver {
       StreamController<int>.broadcast();
 
   @override
-  bool get recordsStudyEventsInternally => false;
-
-  @override
   int newSession() => ++_sessionId;
 
   @override
@@ -246,11 +238,190 @@ class _ControlledPlaybackDriver implements SentencePlaybackDriver {
   void unbindLockScreen() {}
 }
 
+class _RecordingStudyTimeService extends FakeStudyTimeService {
+  final List<({Duration duration, String text, StudyStage stage})>
+  sentencePlaybacks = [];
+  final List<({Duration duration, StudyStage stage})> speechRecognitions = [];
+  final List<
+    ({Duration studyDuration, Duration inputDuration, StudyStage stage})
+  >
+  sessionDurations = [];
+  int flushCalls = 0;
+
+  @override
+  void submitSentencePlayback({
+    required Duration duration,
+    required String text,
+    required StudyStage stage,
+    bool recordInputDuration = true,
+    DateTime? date,
+  }) {
+    sentencePlaybacks.add((duration: duration, text: text, stage: stage));
+  }
+
+  @override
+  void submitSpeechRecognition({
+    required Duration duration,
+    int producedWordCount = 0,
+    required StudyStage stage,
+    DateTime? date,
+  }) {
+    speechRecognitions.add((duration: duration, stage: stage));
+  }
+
+  @override
+  Future<void> recordSessionDurations({
+    required Duration studyDuration,
+    Duration inputDuration = Duration.zero,
+    required StudyStage stage,
+    DateTime? date,
+  }) async {
+    sessionDurations.add((
+      studyDuration: studyDuration,
+      inputDuration: inputDuration,
+      stage: stage,
+    ));
+  }
+
+  @override
+  Future<void> flush() async {
+    flushCalls += 1;
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+  });
+
+  group('ReviewDifficultPractice 新学习统计', () {
+    test('完整播放写入输入统计，退出刷写页面学习时长', () async {
+      final playback = _RecordingPlaybackDriver();
+      final statistics = _RecordingStudyTimeService();
+      final speechController = TestSpeechRecordingController();
+      final container = ProviderContainer(
+        overrides: [
+          foregroundAudioEngineProvider.overrideWith(
+            () => _ReplayTestAudioEngine(),
+          ),
+          learningSessionProvider.overrideWith(
+            () => _PassiveLearningSession(
+              const LearningSessionState(
+                learningMode: LearningMode.reviewDifficultPractice,
+                audioItemId: 'audio-stats',
+              ),
+            ),
+          ),
+          learningProgressNotifierProvider.overrideWith(
+            () => _RecordingLearningProgressNotifier(
+              const LearningProgressState(),
+            ),
+          ),
+          analyticsOverride(),
+          ...studyTimeOverrides(
+            studyTimeService: statistics,
+            speechControllerFactory: () => speechController,
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(reviewDifficultPracticeProvider.notifier);
+      await notifier.initialize(
+        [
+          Sentence(
+            index: 0,
+            text: 'A complete sentence',
+            startTime: Duration.zero,
+            endTime: const Duration(seconds: 1),
+          ),
+        ],
+        settings: const DifficultPracticeSettings(
+          controlMode: ShadowingControlMode.manual,
+        ),
+        playbackDriver: playback,
+      );
+
+      await notifier.startPlaying();
+      await notifier.disposePlayer();
+
+      expect(statistics.sentencePlaybacks, hasLength(1));
+      expect(statistics.sentencePlaybacks.single.text, 'A complete sentence');
+      expect(
+        statistics.sentencePlaybacks.single.stage,
+        StudyStage.reviewDifficultPractice,
+      );
+      expect(statistics.sessionDurations, isNotEmpty);
+      expect(
+        statistics.sessionDurations.single.stage,
+        StudyStage.reviewDifficultPractice,
+      );
+      expect(statistics.flushCalls, greaterThan(0));
+    });
+
+    test('取消播放和退出后的迟到回调不会写入统计', () async {
+      final playback = _ControlledPlaybackDriver();
+      final statistics = _RecordingStudyTimeService();
+      final speechController = TestSpeechRecordingController();
+      final container = ProviderContainer(
+        overrides: [
+          foregroundAudioEngineProvider.overrideWith(
+            () => _ReplayTestAudioEngine(),
+          ),
+          learningSessionProvider.overrideWith(
+            () => _PassiveLearningSession(
+              const LearningSessionState(
+                learningMode: LearningMode.reviewDifficultPractice,
+                audioItemId: 'audio-stats',
+              ),
+            ),
+          ),
+          learningProgressNotifierProvider.overrideWith(
+            () => _RecordingLearningProgressNotifier(
+              const LearningProgressState(),
+            ),
+          ),
+          analyticsOverride(),
+          ...studyTimeOverrides(
+            studyTimeService: statistics,
+            speechControllerFactory: () => speechController,
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(reviewDifficultPracticeProvider.notifier);
+      await notifier.initialize(
+        [
+          Sentence(
+            index: 0,
+            text: 'Cancelled sentence',
+            startTime: Duration.zero,
+            endTime: const Duration(seconds: 1),
+          ),
+        ],
+        settings: const DifficultPracticeSettings(
+          controlMode: ShadowingControlMode.manual,
+        ),
+        playbackDriver: playback,
+      );
+
+      final playing = notifier.startPlaying();
+      await playback.waitForPlayCount(1);
+      notifier.pause();
+      playback.complete(0, SentencePlaybackResult.cancelled);
+      await playing;
+      expect(statistics.sentencePlaybacks, isEmpty);
+
+      speechController.emitRecordingCompleted(const Duration(seconds: 2));
+      expect(statistics.speechRecognitions, hasLength(1));
+
+      await notifier.disposePlayer();
+      speechController.emitRecordingCompleted(const Duration(seconds: 3));
+      expect(statistics.speechRecognitions, hasLength(1));
+    });
   });
 
   group('ReviewDifficultPractice 开始播放时保存断点', () {
@@ -282,7 +453,7 @@ void main() {
       addTearDown(container.dispose);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
-      notifier.initialize(
+      await notifier.initialize(
         [
           Sentence(
             index: 0,
@@ -342,7 +513,7 @@ void main() {
       addTearDown(container.dispose);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
-      notifier.initialize(
+      await notifier.initialize(
         [
           Sentence(
             index: 0,
@@ -403,7 +574,7 @@ void main() {
       addTearDown(container.dispose);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
-      notifier.initialize([
+      await notifier.initialize([
         Sentence(
           index: 0,
           text: 'First sentence',
@@ -454,7 +625,7 @@ void main() {
       addTearDown(container.dispose);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
-      notifier.initialize([
+      await notifier.initialize([
         Sentence(
           index: 0,
           text: 'First sentence',
@@ -512,7 +683,7 @@ void main() {
       addTearDown(container.dispose);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
-      notifier.initialize([
+      await notifier.initialize([
         Sentence(
           index: 0,
           text: 'First sentence',
@@ -570,7 +741,7 @@ void main() {
       addTearDown(container.dispose);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
-      notifier.initialize([
+      await notifier.initialize([
         Sentence(
           index: 0,
           text: 'First sentence',
@@ -631,7 +802,7 @@ void main() {
         ),
       ];
 
-      notifier.initialize(sentences);
+      await notifier.initialize(sentences);
       unawaited(notifier.startPlaying());
       await Future<void>.delayed(const Duration(milliseconds: 10));
       expect(
@@ -639,9 +810,9 @@ void main() {
         isA<BlindPlayingPrompt>(),
       );
 
-      notifier.disposePlayer();
+      await notifier.disposePlayer();
 
-      notifier.initialize(sentences);
+      await notifier.initialize(sentences);
       unawaited(notifier.startPlaying());
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
@@ -688,7 +859,7 @@ void main() {
       addTearDown(container.dispose);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
-      notifier.initialize([
+      await notifier.initialize([
         Sentence(
           index: 0,
           text: 'First sentence',
@@ -749,7 +920,7 @@ void main() {
       addTearDown(container.dispose);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
-      notifier.initialize([
+      await notifier.initialize([
         Sentence(
           index: 0,
           text: 'First sentence',
@@ -823,7 +994,7 @@ void main() {
       final container = buildContainer();
       addTearDown(container.dispose);
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
-      notifier.initialize(buildSentences(8));
+      await notifier.initialize(buildSentences(8));
 
       await notifier.goToSentence(5);
 
@@ -837,7 +1008,7 @@ void main() {
       final container = buildContainer();
       addTearDown(container.dispose);
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
-      notifier.initialize(buildSentences(5));
+      await notifier.initialize(buildSentences(5));
 
       await notifier.goToSentence(99);
       expect(
@@ -856,7 +1027,7 @@ void main() {
       final container = buildContainer();
       addTearDown(container.dispose);
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
-      notifier.initialize(buildSentences(5));
+      await notifier.initialize(buildSentences(5));
       await notifier.goToSentence(2);
 
       await notifier.goToSentence(2);
@@ -873,7 +1044,7 @@ void main() {
       final container = buildContainer();
       addTearDown(container.dispose);
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
-      notifier.initialize(
+      await notifier.initialize(
         buildSentences(3),
         settings: const DifficultPracticeSettings(
           controlMode: ShadowingControlMode.manual,

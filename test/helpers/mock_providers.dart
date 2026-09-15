@@ -35,7 +35,7 @@ import 'package:echo_loop/database/providers.dart';
 import 'package:echo_loop/models/app_update_info.dart';
 import 'package:echo_loop/providers/learning_settings_provider.dart';
 import 'package:echo_loop/services/notification_permission_service.dart';
-import 'package:echo_loop/services/study_event_recorder.dart';
+import 'package:echo_loop/services/study_time_service.dart';
 import 'package:echo_loop/services/transcription_api_client.dart';
 import 'package:echo_loop/database/daos/sentence_ai_cache_dao.dart';
 
@@ -417,6 +417,8 @@ class TestLocalTranscriptionTaskManager extends LocalTranscriptionTaskManager {
 
 /// 测试用 SpeechRecordingController — 不依赖平台通道
 class TestSpeechRecordingController extends SpeechRecordingController {
+  void Function(Duration duration)? recordingCompletionHandler;
+
   final SpeechRecordingPhase initialPhase;
   final SpeechPracticeAttempt? initialAttempt;
 
@@ -456,12 +458,15 @@ class TestSpeechRecordingController extends SpeechRecordingController {
   Future<void> deleteRecording(String filePath) async {}
 
   @override
-  void setRecorder(StudyEventRecorder? recorder) {}
-
-  @override
   void setRecordingCompletionHandler(
     void Function(Duration duration)? handler,
-  ) {}
+  ) {
+    recordingCompletionHandler = handler;
+  }
+
+  void emitRecordingCompleted(Duration duration) {
+    recordingCompletionHandler?.call(duration);
+  }
 }
 
 // ========== RetellRecordingController ==========
@@ -555,11 +560,16 @@ TranscriptionApiClient createTestTranscriptionApiClient() {
 // ========== studyTimeOverrides ==========
 
 /// 返回录音控制器 + study time 的 override 列表
-List<Override> studyTimeOverrides() {
+List<Override> studyTimeOverrides({
+  StudyTimeService? studyTimeService,
+  TestSpeechRecordingController Function()? speechControllerFactory,
+}) {
   return [
-    studyTimeServiceProvider.overrideWithValue(FakeStudyTimeService()),
+    studyTimeServiceProvider.overrideWithValue(
+      studyTimeService ?? FakeStudyTimeService(),
+    ),
     speechRecordingControllerProvider.overrideWith(
-      TestSpeechRecordingController.new,
+      speechControllerFactory ?? TestSpeechRecordingController.new,
     ),
     retellRecordingControllerProvider.overrideWith(
       TestRetellRecordingController.new,

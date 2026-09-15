@@ -30,7 +30,6 @@ import '../../services/recording_service.dart';
 import '../../services/speech_completion_detector.dart';
 import '../../services/speech_practice_matcher.dart';
 import '../../services/speech_practice_platform.dart';
-import '../../services/study_event_recorder.dart';
 import '../learning_settings_provider.dart';
 import '../offline_asr_settings_provider.dart';
 
@@ -230,7 +229,6 @@ final speechRecordingControllerProvider =
 class SpeechRecordingController extends Notifier<SpeechRecordingState> {
   // ── 服务 ──
   RecordingService? _recordingService;
-  StudyEventRecorder? _recorder;
   void Function(Duration duration)? _recordingCompletionHandler;
   StreamSubscription<SpeechPracticeEvent>? _eventSub;
   int _roundGeneration = 0;
@@ -283,13 +281,6 @@ class SpeechRecordingController extends Notifier<SpeechRecordingState> {
   }
 
   // ========== 配置方法 ==========
-
-  /// 设置学习事件记录器（Provider 进入模式时注入，退出时传 null 清除）
-  ///
-  /// 录音完成后自动通过 recorder 记录说的时长。
-  void setRecorder(StudyEventRecorder? recorder) {
-    _recorder = recorder;
-  }
 
   /// 设置录音完成回调，供新学习统计链路接收有效输出时长。
   ///
@@ -373,7 +364,7 @@ class SpeechRecordingController extends Notifier<SpeechRecordingState> {
       'SpeechRec',
       '│ backend=${backend.runtimeType} permissions=${state.permissions.microphone.name}/${state.permissions.speech.name}',
     );
-    final service = RecordingService(backend)..recorder = _recorder;
+    final service = RecordingService(backend);
     _recordingService = service;
     try {
       final asrSettings = ref.read(offlineAsrSettingsProvider);

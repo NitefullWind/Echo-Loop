@@ -11,7 +11,6 @@ import 'dart:math' as math;
 import '../models/speech_practice_models.dart';
 import 'app_logger.dart';
 import '../services/speech_practice_platform.dart';
-import 'study_event_recorder.dart';
 
 /// 录音结果。
 class RecordingResult {
@@ -76,11 +75,6 @@ class RecordingService {
   bool _cancelRequested = false;
   bool _disposed = false;
   Future<void>? _disposeOperation;
-
-  /// 学习事件记录器（外部设置，用于记录说的时长）
-  ///
-  /// Provider 进入学习模式时注入、退出时置 null。
-  StudyEventRecorder? recorder;
 
   RecordingService(this._backend);
 
@@ -262,7 +256,7 @@ class RecordingService {
 
   /// 停止录音，返回文件路径。不等待转录结果。
   ///
-  /// 录音时长在此处计算并写入 recorder。
+  /// 录音时长在此处计算，并由上层学习任务决定如何记录统计。
   /// 调用后需调用 [waitForTranscript] 获取转录结果，或直接存录音。
   Future<RecordingResult> stopSession({
     required String promptId,
@@ -322,7 +316,6 @@ class RecordingService {
     );
 
     final recordedDuration = Duration(milliseconds: math.max(0, durationMs));
-    if (durationMs > 0) recorder?.onRecordingCompleted(durationMs);
     return RecordingResult(
       filePath: filePath,
       recordedDuration: recordedDuration,

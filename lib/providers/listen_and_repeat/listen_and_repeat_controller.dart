@@ -227,7 +227,6 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
     ref.read(listeningPracticeProvider.notifier).suspendListeners();
     if (_manageForegroundAudioEngine) {
       await _ensureForegroundAudioLoaded(audioItemId);
-      ref.read(foregroundAudioEngineProvider.notifier).setRecorder(null);
     }
 
     final studySessionGeneration = _studySessionGeneration;
@@ -805,7 +804,6 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
               'error=$error\n$stackTrace',
         );
       }
-      foreground.setRecorder(null);
     }
 
     final practice = ref.read(listeningPracticeProvider.notifier);

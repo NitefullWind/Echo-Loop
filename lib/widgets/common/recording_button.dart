@@ -18,7 +18,6 @@ enum RecordingButtonMode {
   /// 录音中（红色脉冲麦克风）
   recording,
 
-  // TODO: 等难句补练/复述页迁移到新架构后删除，用 ProcessingIndicator 替代
   /// 禁用（灰显麦克风，不可点击）
   disabled,
 }
