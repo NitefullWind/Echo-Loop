@@ -203,11 +203,21 @@ void main() {
   });
 
   testWidgets('首次渲染从最新周期开始且视觉顺序保持时间正序', (tester) async {
+    final today = DateTime.now();
+    final currentWeekStart = DateTime(
+      today.year,
+      today.month,
+      today.day,
+    ).subtract(Duration(days: today.weekday - DateTime.monday));
     final buckets = List.generate(
       8,
       (index) => StudyDurationBucket(
-        periodStart: DateTime(2026, 7, 20 + index * 7),
-        periodEnd: DateTime(2026, 7, 26 + index * 7),
+        periodStart: currentWeekStart.subtract(
+          Duration(days: (7 - index) * 7),
+        ),
+        periodEnd: currentWeekStart
+            .subtract(Duration(days: (7 - index) * 7))
+            .add(const Duration(days: 6)),
         totalSeconds: index == 7 ? 3900 : 60,
         inputSeconds: index == 7 ? 3900 : 60,
         outputSeconds: 0,
@@ -223,7 +233,14 @@ void main() {
     expect(list.controller!.position.pixels, 0);
     expect(find.text('本周'), findsOneWidget);
 
-    final earliest = tester.getCenter(find.text('7/20-26'));
+    final earliestBucket = buckets.first;
+    final earliestLabel = formatStudyDurationBucketLabel(
+      bucket: earliestBucket,
+      granularity: StudyDurationGranularity.week,
+      now: today,
+      isZh: true,
+    );
+    final earliest = tester.getCenter(find.text(earliestLabel));
     final latest = tester.getCenter(find.text('本周'));
     expect(earliest.dx, lessThan(latest.dx));
   });
