@@ -42,6 +42,7 @@ import '../models/difficult_practice_settings.dart';
 import '../models/intensive_listen_settings.dart'
     show PauseMode, IntensiveListenSettings;
 import '../models/retell_settings.dart' show KeywordRatio, RetellSettings;
+import '../models/study_stage.dart';
 import '../utils/blind_listen_duration_estimator.dart';
 import '../utils/paragraph_grouping.dart';
 import '../utils/playback_speed_default.dart';
@@ -58,6 +59,7 @@ import '../widgets/common/paragraph_selection_sheet.dart'
 import '../widgets/retell/retell_briefing_sheet.dart';
 import '../widgets/review/review_briefing_sheet.dart';
 import '../widgets/speech_permission_dialog.dart';
+import '../widgets/study/study_stage_visuals.dart';
 import '../widgets/guide_flow.dart';
 import '../widgets/manage_subtitles_sheet.dart';
 import '../providers/listening_practice/bookmark_manager.dart';
@@ -2483,6 +2485,17 @@ class _FirstStudySection extends ConsumerWidget {
     this.onStartCurrentStage,
   });
 
+  /// 使用统计与任务卡片共用的阶段展示定义，仅补充首次学习描述。
+  _StepData _stepDataForStage(StudyStage stage, String description) {
+    final visual = studyStageVisual(stage, l10n);
+    return _StepData(
+      icon: visual.icon,
+      iconColor: visual.iconColor,
+      name: visual.name,
+      description: description,
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -2510,29 +2523,21 @@ class _FirstStudySection extends ConsumerWidget {
 
     /// 子步骤的 UI 数据映射
     final stepDataMap = {
-      SubStageType.blindListen: _StepData(
-        icon: Icons.headphones,
-        iconColor: Colors.blue,
-        name: l10n.stepBlindListening,
-        description: l10n.stepBlindListeningDesc,
+      SubStageType.blindListen: _stepDataForStage(
+        StudyStage.blindListen,
+        l10n.stepBlindListeningDesc,
       ),
-      SubStageType.intensiveListen: _StepData(
-        icon: Icons.hearing,
-        iconColor: Colors.indigo,
-        name: l10n.stepIntensiveListening,
-        description: l10n.stepIntensiveListeningDesc,
+      SubStageType.intensiveListen: _stepDataForStage(
+        StudyStage.intensiveListen,
+        l10n.stepIntensiveListeningDesc,
       ),
-      SubStageType.listenAndRepeat: _StepData(
-        icon: Icons.record_voice_over,
-        iconColor: Colors.orange,
-        name: l10n.stepShadowing,
-        description: l10n.stepShadowingDesc,
+      SubStageType.listenAndRepeat: _stepDataForStage(
+        StudyStage.listenAndRepeat,
+        l10n.stepShadowingDesc,
       ),
-      SubStageType.retell: _StepData(
-        icon: Icons.chat,
-        iconColor: Colors.teal,
-        name: l10n.stepRetelling,
-        description: l10n.stepRetellingDesc,
+      SubStageType.retell: _stepDataForStage(
+        StudyStage.retell,
+        l10n.stepRetellingDesc,
       ),
     };
 
@@ -3502,6 +3507,17 @@ class _ReviewRoundSection extends ConsumerWidget {
     this.onStartCurrentStage,
   });
 
+  /// 使用统计与任务卡片共用的阶段展示定义，仅补充复习描述。
+  _StepData _stepDataForStage(StudyStage stage, String description) {
+    final visual = studyStageVisual(stage, l10n);
+    return _StepData(
+      icon: visual.icon,
+      iconColor: visual.iconColor,
+      name: visual.name,
+      description: description,
+    );
+  }
+
   /// 计算本轮次「已完成」子步骤数（基于真实完成历史 [completedKeys]）。
   int _completedSubStageCount(Set<String> completedKeys) {
     int count = 0;
@@ -3566,41 +3582,29 @@ class _ReviewRoundSection extends ConsumerWidget {
   /// 复习子阶段名称与描述映射
   _StepData _subStageData(SubStageType subStage) {
     return switch (subStage) {
-      SubStageType.blindListen => _StepData(
-        icon: Icons.headphones,
-        iconColor: Colors.blue,
-        name: l10n.stepBlindListening,
-        description: l10n.reviewBlindListenDesc,
+      SubStageType.blindListen => _stepDataForStage(
+        StudyStage.blindListen,
+        l10n.reviewBlindListenDesc,
       ),
-      SubStageType.intensiveListen => _StepData(
-        icon: Icons.hearing,
-        iconColor: Colors.indigo,
-        name: l10n.stepIntensiveListening,
-        description: l10n.stepIntensiveListeningDesc,
+      SubStageType.intensiveListen => _stepDataForStage(
+        StudyStage.intensiveListen,
+        l10n.stepIntensiveListeningDesc,
       ),
-      SubStageType.listenAndRepeat => _StepData(
-        icon: Icons.record_voice_over,
-        iconColor: Colors.orange,
-        name: l10n.stepShadowing,
-        description: l10n.stepShadowingDesc,
+      SubStageType.listenAndRepeat => _stepDataForStage(
+        StudyStage.listenAndRepeat,
+        l10n.stepShadowingDesc,
       ),
-      SubStageType.retell => _StepData(
-        icon: Icons.chat,
-        iconColor: Colors.teal,
-        name: l10n.stepRetelling,
-        description: l10n.stepRetellingDesc,
+      SubStageType.retell => _stepDataForStage(
+        StudyStage.retell,
+        l10n.stepRetellingDesc,
       ),
-      SubStageType.reviewDifficultPractice => _StepData(
-        icon: Icons.fitness_center,
-        iconColor: Colors.orange,
-        name: l10n.reviewDifficultPracticeTitle,
-        description: l10n.reviewDifficultPracticeDesc,
+      SubStageType.reviewDifficultPractice => _stepDataForStage(
+        StudyStage.reviewDifficultPractice,
+        l10n.reviewDifficultPracticeDesc,
       ),
-      SubStageType.reviewRetellParagraph => _StepData(
-        icon: Icons.chat,
-        iconColor: Colors.teal,
-        name: l10n.stepRetelling,
-        description: l10n.reviewRetellParagraphDesc,
+      SubStageType.reviewRetellParagraph => _stepDataForStage(
+        StudyStage.retell,
+        l10n.reviewRetellParagraphDesc,
       ),
       SubStageType.reviewRetellSummary => _StepData(
         icon: Icons.summarize,

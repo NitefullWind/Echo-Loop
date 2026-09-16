@@ -203,6 +203,86 @@ void main() {
     expect(find.text('详细分布数据从此版本开始记录'), findsOneWidget);
   });
 
+  testWidgets('阶段明细与学习计划使用一致的任务文案和图标', (tester) async {
+    const stages = [
+      (
+        stage: StudyStage.blindListen,
+        name: '全文盲听',
+        icon: Icons.headphones,
+        color: Colors.blue,
+      ),
+      (
+        stage: StudyStage.intensiveListen,
+        name: '逐句精听',
+        icon: Icons.hearing,
+        color: Colors.indigo,
+      ),
+      (
+        stage: StudyStage.listenAndRepeat,
+        name: '难句跟读',
+        icon: Icons.record_voice_over,
+        color: Colors.orange,
+      ),
+      (
+        stage: StudyStage.retell,
+        name: '段落复述',
+        icon: Icons.chat,
+        color: Colors.teal,
+      ),
+      (
+        stage: StudyStage.reviewDifficultPractice,
+        name: '难句补练',
+        icon: Icons.fitness_center,
+        color: Colors.orange,
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('zh'),
+        supportedLocales: const [Locale('zh'), Locale('en')],
+        localizationsDelegates: [
+          AppLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        home: Scaffold(
+          body: DayStageBreakdownSheet(
+            date: DateTime(2026, 9, 17),
+            stageRecords: [
+              for (final item in stages)
+                DailyStageStudyRecordData(
+                  stage: item.stage,
+                  studyTimeSeconds: 60,
+                  inputTimeSeconds: 0,
+                  outputTimeSeconds: 0,
+                ),
+            ],
+            totalData: const DailyTotalData(
+              studyTimeSeconds: 300,
+              inputTimeSeconds: 0,
+              outputTimeSeconds: 0,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    for (final item in stages) {
+      expect(find.text(item.name), findsOneWidget);
+      final icon = tester.widget<Icon>(find.byIcon(item.icon));
+      expect(icon.color, item.color);
+      expect(icon.size, 18);
+    }
+    expect(find.text('盲听'), findsNothing);
+    expect(find.text('精听'), findsNothing);
+    expect(find.text('跟读'), findsNothing);
+    expect(find.text('复述'), findsNothing);
+    expect(find.byIcon(Icons.chat_bubble_outline), findsNothing);
+  });
+
   testWidgets('首次渲染从最新周期开始且视觉顺序保持时间正序', (tester) async {
     final today = DateTime.now();
     final currentWeekStart = DateTime(
@@ -283,7 +363,7 @@ void main() {
       });
       await tester.pumpAndSettle();
       expect(find.byType(DayStageBreakdownSheet), findsOneWidget);
-      expect(find.text('精听'), findsOneWidget);
+      expect(find.text('逐句精听'), findsOneWidget);
       expect(find.byIcon(Icons.subject), findsOneWidget);
       expect(find.byIcon(Icons.menu_book_outlined), findsOneWidget);
       expect(find.text('词汇复习'), findsOneWidget);

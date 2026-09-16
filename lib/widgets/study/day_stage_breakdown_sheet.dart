@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
-import '../../models/study_stage.dart';
 import '../../services/study_time_service.dart';
 import 'study_stats_header.dart';
+import 'study_stage_visuals.dart';
 
 /// 阶段明细弹窗的显示模式
 ///
@@ -310,8 +310,7 @@ class _StageRow extends StatelessWidget {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
 
-    final icon = _stageIcon(record.stage);
-    final name = _stageName(record.stage, l10n);
+    final visual = studyStageVisual(record.stage, l10n);
 
     // clamp 输入/输出，确保 听+说 ≤ 该阶段总时长
     final total = record.studyTimeSeconds;
@@ -329,13 +328,17 @@ class _StageRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: theme.colorScheme.onSurfaceVariant),
-          const SizedBox(width: 10),
+          Icon(
+            visual.icon,
+            size: 18,
+            color: visual.iconColor ?? theme.colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(name, style: theme.textTheme.bodyMedium),
+                Text(visual.name, style: theme.textTheme.bodyMedium),
                 // 总览模式下显示听/说副行
                 if (mode == StageBreakdownMode.total &&
                     (clampedInput > 0 || clampedOutput > 0))
@@ -359,30 +362,6 @@ class _StageRow extends StatelessWidget {
     );
   }
 }
-
-/// 阶段对应的 Material 图标
-IconData _stageIcon(StudyStage stage) => switch (stage) {
-  StudyStage.blindListen => Icons.headphones,
-  StudyStage.intensiveListen => Icons.hearing,
-  StudyStage.listenAndRepeat => Icons.record_voice_over,
-  StudyStage.retell => Icons.chat_bubble_outline,
-  StudyStage.reviewDifficultPractice => Icons.fitness_center,
-  StudyStage.savedSentencesReview => Icons.subject,
-  StudyStage.savedVocabularyReview => Icons.menu_book_outlined,
-  StudyStage.freePlayer => Icons.headphones_outlined,
-};
-
-/// 阶段对应的 i18n 名称
-String _stageName(StudyStage stage, AppLocalizations l10n) => switch (stage) {
-  StudyStage.blindListen => l10n.stageBlindListen,
-  StudyStage.intensiveListen => l10n.stageIntensiveListen,
-  StudyStage.listenAndRepeat => l10n.stageListenAndRepeat,
-  StudyStage.retell => l10n.stageRetell,
-  StudyStage.reviewDifficultPractice => l10n.stageReviewDifficultPractice,
-  StudyStage.savedSentencesReview => l10n.stageBookmarkReview,
-  StudyStage.savedVocabularyReview => l10n.stageFlashcard,
-  StudyStage.freePlayer => l10n.freePlay,
-};
 
 /// 格式化时长显示
 ///
