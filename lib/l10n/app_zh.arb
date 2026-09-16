@@ -6,7 +6,7 @@
   "@@locale": "zh",
   "appTitle": "Echo Loop",
   "premiumTitle": "Echo Loop 会员",
-  "premiumTagline": "使用更多 AI，学习更高效。",
+  "premiumTagline": "无限 AI，学习更高效。",
   "aiQuotaExceededGenericTitle": "本月 AI 免费额度已用完",
   "aiQuotaExceededTitle": "本月 {feature}免费额度已用完",
   "@aiQuotaExceededTitle": {
@@ -38,14 +38,14 @@
   "premiumEntryBadgeActive": "会员",
   "premiumEntryBadgeUpgrade": "升级",
   "premiumActive": "你已是会员",
-  "premiumBenefitTranslation": "更多 AI 翻译",
-  "premiumBenefitAnalysis": "更多 AI 句子解析",
-  "premiumBenefitWordAnalysis": "更多 AI 词汇解析",
+  "premiumBenefitTranslation": "无限 AI 翻译",
+  "premiumBenefitAnalysis": "无限 AI 句子解析",
+  "premiumBenefitWordAnalysis": "无限 AI 词汇解析",
   "premiumBenefitTranscription": "更多 AI 字幕转录",
-  "premiumBenefitAiAssistant": "更多 AI 助手对话次数",
+  "premiumBenefitAiAssistant": "无限 AI 助手对话",
   "premiumBenefitPrioritySupport": "优先客户支持",
-  "premiumBenefitSenseGroups": "更多 AI 句子意群拆分",
-  "premiumBenefitRetellReview": "更多 AI 复述评估",
+  "premiumBenefitSenseGroups": "无限 AI 句子意群拆分",
+  "premiumBenefitRetellReview": "无限 AI 复述评估",
   "premiumSubscribe": "订阅",
   "premiumBuyOneYear": "购买一年会员",
   "premiumStartTrial": "开始 {days} 天免费试用",
@@ -94,7 +94,7 @@
   "premiumRestoreNone": "未找到可恢复的购买。",
   "premiumRestored": "已恢复购买。",
   "premiumWebCheckoutCta": "查看订阅方案",
-  "premiumUseWebCheckoutFallback": "商店支付遇到问题？使用网页支付",
+  "premiumUseWebCheckoutFallback": "中国用户请使用 Paddle 支付",
   "premiumUseStoreCheckout": "继续使用商店支付",
   "premiumWebVerifying": "正在等待支付结果确认…",
   "premiumWebOpenFailed": "无法打开结账页面，请重试。",
@@ -171,14 +171,14 @@
       "renewal": { "type": "String" }
     }
   },
-  "premiumSpecialOfferPercent": "特别优惠：首{period}立减 {percent}%",
+  "premiumSpecialOfferPercent": "早鸟优惠：首{period}立减 {percent}%",
   "@premiumSpecialOfferPercent": {
     "placeholders": {
       "percent": { "type": "int" },
       "period": { "type": "String" }
     }
   },
-  "premiumSpecialOfferIntro": "特别优惠：{intro}，之后 {renewal}",
+  "premiumSpecialOfferIntro": "早鸟优惠：{intro}，之后 {renewal}",
   "@premiumSpecialOfferIntro": {
     "placeholders": {
       "intro": { "type": "String" },

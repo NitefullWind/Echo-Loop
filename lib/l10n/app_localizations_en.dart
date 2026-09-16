@@ -28,7 +28,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get premiumTitle => 'Echo Loop Premium';
 
   @override
-  String get premiumTagline => 'Unlock more AI-powered features';
+  String get premiumTagline => 'Unlimited AI to power your learning';
 
   @override
   String get aiQuotaExceededGenericTitle =>
@@ -103,29 +103,29 @@ class AppLocalizationsEn extends AppLocalizations {
   String get premiumActive => 'You\'re already on the Premium plan.';
 
   @override
-  String get premiumBenefitTranslation => 'More AI translations';
+  String get premiumBenefitTranslation => 'Unlimited AI translations';
 
   @override
-  String get premiumBenefitAnalysis => 'More AI sentence analysis';
+  String get premiumBenefitAnalysis => 'Unlimited AI sentence analysis';
 
   @override
   String get premiumBenefitWordAnalysis =>
-      'More AI word and phrase explanation';
+      'Unlimited AI word and phrase explanations';
 
   @override
   String get premiumBenefitTranscription => 'More AI subtitle transcriptions';
 
   @override
-  String get premiumBenefitAiAssistant => 'More AI assistant chats';
+  String get premiumBenefitAiAssistant => 'Unlimited AI assistant chats';
 
   @override
   String get premiumBenefitPrioritySupport => 'Priority support';
 
   @override
-  String get premiumBenefitSenseGroups => 'More AI sentence chunking';
+  String get premiumBenefitSenseGroups => 'Unlimited AI sentence chunking';
 
   @override
-  String get premiumBenefitRetellReview => 'More AI retell reviews';
+  String get premiumBenefitRetellReview => 'Unlimited AI retell reviews';
 
   @override
   String get premiumSubscribe => 'Subscribe';
@@ -340,12 +340,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String premiumSpecialOfferPercent(int percent, String period) {
-    return 'Special offer: $percent% off your first $period';
+    return 'Early-bird offer: $percent% off your first $period';
   }
 
   @override
   String premiumSpecialOfferIntro(String intro, String renewal) {
-    return 'Special offer: $intro, then $renewal';
+    return 'Early-bird offer: $intro, then $renewal';
   }
 
   @override

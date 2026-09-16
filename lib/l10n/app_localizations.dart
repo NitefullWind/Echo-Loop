@@ -137,7 +137,7 @@ abstract class AppLocalizations {
   /// No description provided for @premiumTagline.
   ///
   /// In en, this message translates to:
-  /// **'Unlock more AI-powered features'**
+  /// **'Unlimited AI to power your learning'**
   String get premiumTagline;
 
   /// No description provided for @aiQuotaExceededGenericTitle.
@@ -269,19 +269,19 @@ abstract class AppLocalizations {
   /// No description provided for @premiumBenefitTranslation.
   ///
   /// In en, this message translates to:
-  /// **'More AI translations'**
+  /// **'Unlimited AI translations'**
   String get premiumBenefitTranslation;
 
   /// No description provided for @premiumBenefitAnalysis.
   ///
   /// In en, this message translates to:
-  /// **'More AI sentence analysis'**
+  /// **'Unlimited AI sentence analysis'**
   String get premiumBenefitAnalysis;
 
   /// No description provided for @premiumBenefitWordAnalysis.
   ///
   /// In en, this message translates to:
-  /// **'More AI word and phrase explanation'**
+  /// **'Unlimited AI word and phrase explanations'**
   String get premiumBenefitWordAnalysis;
 
   /// No description provided for @premiumBenefitTranscription.
@@ -293,7 +293,7 @@ abstract class AppLocalizations {
   /// No description provided for @premiumBenefitAiAssistant.
   ///
   /// In en, this message translates to:
-  /// **'More AI assistant chats'**
+  /// **'Unlimited AI assistant chats'**
   String get premiumBenefitAiAssistant;
 
   /// No description provided for @premiumBenefitPrioritySupport.
@@ -305,13 +305,13 @@ abstract class AppLocalizations {
   /// No description provided for @premiumBenefitSenseGroups.
   ///
   /// In en, this message translates to:
-  /// **'More AI sentence chunking'**
+  /// **'Unlimited AI sentence chunking'**
   String get premiumBenefitSenseGroups;
 
   /// No description provided for @premiumBenefitRetellReview.
   ///
   /// In en, this message translates to:
-  /// **'More AI retell reviews'**
+  /// **'Unlimited AI retell reviews'**
   String get premiumBenefitRetellReview;
 
   /// No description provided for @premiumSubscribe.
@@ -665,13 +665,13 @@ abstract class AppLocalizations {
   /// No description provided for @premiumSpecialOfferPercent.
   ///
   /// In en, this message translates to:
-  /// **'Special offer: {percent}% off your first {period}'**
+  /// **'Early-bird offer: {percent}% off your first {period}'**
   String premiumSpecialOfferPercent(int percent, String period);
 
   /// No description provided for @premiumSpecialOfferIntro.
   ///
   /// In en, this message translates to:
-  /// **'Special offer: {intro}, then {renewal}'**
+  /// **'Early-bird offer: {intro}, then {renewal}'**
   String premiumSpecialOfferIntro(String intro, String renewal);
 
   /// No description provided for @premiumOfferPeriodYear.

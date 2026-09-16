@@ -12,6 +12,7 @@ import 'utils/time_format.dart';
 import 'utils/echo_loop_scroll_behavior.dart';
 import 'database/app_database.dart';
 import 'database/providers.dart';
+import 'config/client_distribution.dart';
 import 'providers/package_info_provider.dart';
 import 'providers/dictionary_provider.dart';
 import 'providers/download_provider.dart';
@@ -24,6 +25,7 @@ import 'providers/review_reminder_provider.dart';
 import 'services/notification_tap_router_bridge.dart';
 import 'analytics/analytics_providers.dart';
 import 'analytics/analytics_service.dart';
+import 'analytics/models/event_names.dart';
 import 'providers/learning_settings_provider.dart';
 import 'providers/tts/tts_settings_provider.dart';
 import 'providers/intensive_listen_prefs_provider.dart';
@@ -73,6 +75,19 @@ void main() async {
     'analytics_initialize',
     () => initializeAnalyticsWithFallback(prefs),
   );
+  final distribution = clientDistribution;
+  if (distribution != null) {
+    try {
+      // 安装来源是用户属性，不创建额外事件；启动时设置可覆盖匿名用户和已有用户。
+      await analyticsService.setUserProperty(
+        UserProperties.installSource,
+        distribution.headerValue,
+      );
+    } catch (error, stackTrace) {
+      AppLogger.log('Analytics', 'install source registration failed: $error');
+      AppLogger.log('Analytics', stackTrace.toString());
+    }
+  }
   unawaited(_registerAnonymousIdWhenReady(anonymousIdReady, analyticsService));
   // 应用升级迁移由自身记录结构化日志，不包装成普通 StartupTrace 步骤，
   // 避免日志看起来像启动阶段重复执行了一次迁移。

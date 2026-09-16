@@ -259,6 +259,9 @@ abstract class Events {
 
 /// User property 名称常量（写入分析通道用于分群留存）
 abstract class UserProperties {
+  /// 应用分发渠道（app_store / play / direct）
+  static const installSource = 'install_source';
+
   /// 学习目标（exam / daily / work / travel / other）
   static const englishGoal = 'english_goal';
 

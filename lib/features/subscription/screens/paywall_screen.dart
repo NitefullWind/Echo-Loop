@@ -490,20 +490,33 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
   }) {
     return Padding(
       padding: const EdgeInsets.only(top: 6),
-      child: _StoreWebCheckoutSwitch(
-        usingWebCheckout: usingWebCheckout,
-        onPressed: _busy || _waitingForWeb
-            ? null
-            : () {
-                setState(() => _useWebCheckoutFallback = !usingWebCheckout);
-                AppLogger.log(
-                  'Subscription',
-                  '商店包 Web 支付切换: enabled=${!usingWebCheckout}',
-                );
-              },
-        l10n: l10n,
-      ),
+      child: usingWebCheckout
+          ? _StoreWebCheckoutSwitch(
+              usingWebCheckout: true,
+              onPressed: _storeWebCheckoutSwitchCallback(usingWebCheckout),
+              l10n: l10n,
+            )
+          : SizedBox(
+              width: double.infinity,
+              child: _StoreWebCheckoutSwitch(
+                usingWebCheckout: false,
+                onPressed: _storeWebCheckoutSwitchCallback(usingWebCheckout),
+                l10n: l10n,
+              ),
+            ),
     );
+  }
+
+  VoidCallback? _storeWebCheckoutSwitchCallback(bool usingWebCheckout) {
+    return _busy || _waitingForWeb
+        ? null
+        : () {
+            setState(() => _useWebCheckoutFallback = !usingWebCheckout);
+            AppLogger.log(
+              'Subscription',
+              '商店包 Web 支付切换: enabled=${!usingWebCheckout}',
+            );
+          };
   }
 
   void _invalidatePlans(bool usingStoreWebCheckoutFallback) {
@@ -942,13 +955,13 @@ class _BenefitCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final benefits = [
-      l10n.premiumBenefitTranscription,
       l10n.premiumBenefitTranslation,
       l10n.premiumBenefitWordAnalysis,
       l10n.premiumBenefitAnalysis,
       l10n.premiumBenefitAiAssistant,
       l10n.premiumBenefitSenseGroups,
       l10n.premiumBenefitRetellReview,
+      l10n.premiumBenefitTranscription,
       l10n.premiumBenefitPrioritySupport,
     ];
     final theme = Theme.of(context);
@@ -1080,13 +1093,22 @@ class _StoreWebCheckoutSwitch extends StatelessWidget {
         ),
       );
     }
-    return TextButton(
-      style: _subtleTextButtonStyle(),
-      onPressed: onPressed,
-      child: Text(
-        l10n.premiumUseWebCheckoutFallback,
-        style: _subtleTextStyle(theme),
+    // Web 支付是商店包内的备用购买路径，使用次级描边按钮提升可发现性；
+    // 切回商店支付的分支仍保持上面的原有弱化文字按钮。
+    final accent = AppTheme.premiumAccent(theme.brightness);
+    return OutlinedButton.icon(
+      style: OutlinedButton.styleFrom(
+        foregroundColor: accent,
+        side: BorderSide(color: accent),
+        minimumSize: const Size(double.infinity, 48),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        textStyle: theme.textTheme.labelLarge?.copyWith(
+          fontWeight: FontWeight.w600,
+        ),
       ),
+      onPressed: onPressed,
+      icon: const Icon(Icons.open_in_browser_outlined, size: 18),
+      label: Text(l10n.premiumUseWebCheckoutFallback),
     );
   }
 

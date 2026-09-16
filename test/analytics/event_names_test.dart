@@ -215,4 +215,10 @@ void main() {
       expect(unique.length, params.length, reason: '存在重复的参数名');
     });
   });
+
+  group('UserProperties 常量', () {
+    test('安装来源属性名正确', () {
+      expect(UserProperties.installSource, 'install_source');
+    });
+  });
 }

@@ -6,7 +6,7 @@
   "@@locale": "en",
   "appTitle": "Echo Loop",
   "premiumTitle": "Echo Loop Premium",
-  "premiumTagline": "Unlock more AI-powered features",
+  "premiumTagline": "Unlimited AI to power your learning",
   "aiQuotaExceededGenericTitle": "This month's free AI quota is used up",
   "aiQuotaExceededTitle": "This month's free {feature} quota is used up",
   "@aiQuotaExceededTitle": {
@@ -38,14 +38,14 @@
   "premiumEntryBadgeActive": "Premium",
   "premiumEntryBadgeUpgrade": "Upgrade",
   "premiumActive": "You're already on the Premium plan.",
-  "premiumBenefitTranslation": "More AI translations",
-  "premiumBenefitAnalysis": "More AI sentence analysis",
-  "premiumBenefitWordAnalysis": "More AI word and phrase explanation",
+  "premiumBenefitTranslation": "Unlimited AI translations",
+  "premiumBenefitAnalysis": "Unlimited AI sentence analysis",
+  "premiumBenefitWordAnalysis": "Unlimited AI word and phrase explanations",
   "premiumBenefitTranscription": "More AI subtitle transcriptions",
-  "premiumBenefitAiAssistant": "More AI assistant chats",
+  "premiumBenefitAiAssistant": "Unlimited AI assistant chats",
   "premiumBenefitPrioritySupport": "Priority support",
-  "premiumBenefitSenseGroups": "More AI sentence chunking",
-  "premiumBenefitRetellReview": "More AI retell reviews",
+  "premiumBenefitSenseGroups": "Unlimited AI sentence chunking",
+  "premiumBenefitRetellReview": "Unlimited AI retell reviews",
   "premiumSubscribe": "Subscribe",
   "premiumBuyOneYear": "Buy one year",
   "premiumStartTrial": "Start {days}-day free trial",
@@ -171,14 +171,14 @@
       "renewal": { "type": "String" }
     }
   },
-  "premiumSpecialOfferPercent": "Special offer: {percent}% off your first {period}",
+  "premiumSpecialOfferPercent": "Early-bird offer: {percent}% off your first {period}",
   "@premiumSpecialOfferPercent": {
     "placeholders": {
       "percent": { "type": "int" },
       "period": { "type": "String" }
     }
   },
-  "premiumSpecialOfferIntro": "Special offer: {intro}, then {renewal}",
+  "premiumSpecialOfferIntro": "Early-bird offer: {intro}, then {renewal}",
   "@premiumSpecialOfferIntro": {
     "placeholders": {
       "intro": { "type": "String" },

@@ -27,7 +27,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get premiumTitle => 'Echo Loop 会员';
 
   @override
-  String get premiumTagline => '使用更多 AI，学习更高效。';
+  String get premiumTagline => '无限 AI，学习更高效。';
 
   @override
   String get aiQuotaExceededGenericTitle => '本月 AI 免费额度已用完';
@@ -97,28 +97,28 @@ class AppLocalizationsZh extends AppLocalizations {
   String get premiumActive => '你已是会员';
 
   @override
-  String get premiumBenefitTranslation => '更多 AI 翻译';
+  String get premiumBenefitTranslation => '无限 AI 翻译';
 
   @override
-  String get premiumBenefitAnalysis => '更多 AI 句子解析';
+  String get premiumBenefitAnalysis => '无限 AI 句子解析';
 
   @override
-  String get premiumBenefitWordAnalysis => '更多 AI 词汇解析';
+  String get premiumBenefitWordAnalysis => '无限 AI 词汇解析';
 
   @override
   String get premiumBenefitTranscription => '更多 AI 字幕转录';
 
   @override
-  String get premiumBenefitAiAssistant => '更多 AI 助手对话次数';
+  String get premiumBenefitAiAssistant => '无限 AI 助手对话';
 
   @override
   String get premiumBenefitPrioritySupport => '优先客户支持';
 
   @override
-  String get premiumBenefitSenseGroups => '更多 AI 句子意群拆分';
+  String get premiumBenefitSenseGroups => '无限 AI 句子意群拆分';
 
   @override
-  String get premiumBenefitRetellReview => '更多 AI 复述评估';
+  String get premiumBenefitRetellReview => '无限 AI 复述评估';
 
   @override
   String get premiumSubscribe => '订阅';
@@ -214,7 +214,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get premiumWebCheckoutCta => '查看订阅方案';
 
   @override
-  String get premiumUseWebCheckoutFallback => '商店支付遇到问题？使用网页支付';
+  String get premiumUseWebCheckoutFallback => '中国用户请使用 Paddle 支付';
 
   @override
   String get premiumUseStoreCheckout => '继续使用商店支付';
@@ -323,12 +323,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String premiumSpecialOfferPercent(int percent, String period) {
-    return '特别优惠：首$period立减 $percent%';
+    return '早鸟优惠：首$period立减 $percent%';
   }
 
   @override
   String premiumSpecialOfferIntro(String intro, String renewal) {
-    return '特别优惠：$intro，之后 $renewal';
+    return '早鸟优惠：$intro，之后 $renewal';
   }
 
   @override

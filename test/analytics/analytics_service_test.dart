@@ -146,6 +146,14 @@ void main() {
       expect(channel.userProperties.first.value, 'zh');
     });
 
+    test('安装来源用户属性转发到 channel', () async {
+      await service.setUserProperty(UserProperties.installSource, 'play');
+
+      expect(channel.userProperties, hasLength(1));
+      expect(channel.userProperties.first.name, 'install_source');
+      expect(channel.userProperties.first.value, 'play');
+    });
+
     test('channelName 返回通道名', () {
       expect(service.channelName, 'Mock');
     });

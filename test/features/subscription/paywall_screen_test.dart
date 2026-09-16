@@ -372,7 +372,6 @@ void main() {
 
     // 权益列表仍展示
     expect(find.text('More AI subtitle transcriptions'), findsOneWidget);
-    expect(find.text('Special offer: 50% off your first year'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, 'Subscribe'), findsOneWidget);
     expect(find.textContaining('RevenueCat'), findsNothing);
     expect(find.textContaining('Paddle'), findsNothing);
@@ -443,7 +442,7 @@ void main() {
 
     await tester.tap(
       find.widgetWithText(
-        TextButton,
+        OutlinedButton,
         'Store payment not working? Use web checkout',
       ),
     );
@@ -480,7 +479,7 @@ void main() {
 
     expect(
       find.widgetWithText(
-        TextButton,
+        OutlinedButton,
         'Store payment not working? Use web checkout',
       ),
       findsOneWidget,
@@ -494,7 +493,7 @@ void main() {
 
     await tester.tap(
       find.widgetWithText(
-        TextButton,
+        OutlinedButton,
         'Store payment not working? Use web checkout',
       ),
     );
@@ -530,7 +529,7 @@ void main() {
 
     await tester.tap(
       find.widgetWithText(
-        TextButton,
+        OutlinedButton,
         'Store payment not working? Use web checkout',
       ),
     );
@@ -540,7 +539,7 @@ void main() {
 
     expect(
       find.widgetWithText(
-        TextButton,
+        OutlinedButton,
         'Store payment not working? Use web checkout',
       ),
       findsOneWidget,
@@ -909,50 +908,58 @@ void main() {
 
     // 权益列表
     expect(find.text('Echo Loop Premium'), findsWidgets);
-    expect(find.text('Unlock more AI-powered features'), findsOneWidget);
-    expect(find.text('More AI subtitle transcriptions'), findsOneWidget);
-    expect(find.text('More AI translations'), findsOneWidget);
-    expect(find.text('More AI word and phrase explanation'), findsOneWidget);
-    expect(find.text('More AI sentence analysis'), findsOneWidget);
-    expect(find.text('More AI assistant chats'), findsOneWidget);
+    expect(find.text('Unlimited AI to power your learning'), findsOneWidget);
+    expect(find.text('Unlimited AI translations'), findsOneWidget);
+    expect(
+      find.text('Unlimited AI word and phrase explanations'),
+      findsOneWidget,
+    );
+    expect(find.text('Unlimited AI sentence analysis'), findsOneWidget);
+    expect(find.text('Unlimited AI assistant chats'), findsOneWidget);
     expect(find.text('Priority support'), findsOneWidget);
-    expect(find.text('More AI sentence chunking'), findsOneWidget);
-    expect(find.text('Special offer:'), findsNothing);
+    expect(find.text('Unlimited AI sentence chunking'), findsOneWidget);
+    expect(find.text('More AI subtitle transcriptions'), findsOneWidget);
     expect(find.byKey(const ValueKey('paywall_header_logo')), findsOneWidget);
     expect(
-      tester.getTopLeft(find.text('More AI subtitle transcriptions')).dy <
-          tester.getTopLeft(find.text('More AI translations')).dy,
-      isTrue,
-    );
-    expect(
-      tester.getTopLeft(find.text('More AI translations')).dy <
+      tester.getTopLeft(find.text('Unlimited AI translations')).dy <
           tester
-              .getTopLeft(find.text('More AI word and phrase explanation'))
+              .getTopLeft(
+                find.text('Unlimited AI word and phrase explanations'),
+              )
               .dy,
       isTrue,
     );
     expect(
-      tester.getTopLeft(find.text('More AI word and phrase explanation')).dy <
-          tester.getTopLeft(find.text('More AI sentence analysis')).dy,
+      tester
+              .getTopLeft(
+                find.text('Unlimited AI word and phrase explanations'),
+              )
+              .dy <
+          tester.getTopLeft(find.text('Unlimited AI sentence analysis')).dy,
       isTrue,
     );
     expect(
-      tester.getTopLeft(find.text('More AI sentence analysis')).dy <
-          tester.getTopLeft(find.text('More AI assistant chats')).dy,
+      tester.getTopLeft(find.text('Unlimited AI sentence analysis')).dy <
+          tester.getTopLeft(find.text('Unlimited AI assistant chats')).dy,
       isTrue,
     );
     expect(
-      tester.getTopLeft(find.text('More AI assistant chats')).dy <
-          tester.getTopLeft(find.text('More AI sentence chunking')).dy,
+      tester.getTopLeft(find.text('Unlimited AI assistant chats')).dy <
+          tester.getTopLeft(find.text('Unlimited AI sentence chunking')).dy,
       isTrue,
     );
     expect(
-      tester.getTopLeft(find.text('More AI sentence chunking')).dy <
-          tester.getTopLeft(find.text('More AI retell reviews')).dy,
+      tester.getTopLeft(find.text('Unlimited AI sentence chunking')).dy <
+          tester.getTopLeft(find.text('Unlimited AI retell reviews')).dy,
       isTrue,
     );
     expect(
-      tester.getTopLeft(find.text('More AI retell reviews')).dy <
+      tester.getTopLeft(find.text('Unlimited AI retell reviews')).dy <
+          tester.getTopLeft(find.text('More AI subtitle transcriptions')).dy,
+      isTrue,
+    );
+    expect(
+      tester.getTopLeft(find.text('More AI subtitle transcriptions')).dy <
           tester.getTopLeft(find.text('Priority support')).dy,
       isTrue,
     );
@@ -1004,11 +1011,17 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('更多 AI 助手对话次数'), findsOneWidget);
-    expect(find.text('更多 AI 句子解析'), findsOneWidget);
+    expect(find.text('无限 AI 助手对话'), findsOneWidget);
+    expect(find.text('无限 AI 句子解析'), findsOneWidget);
+    expect(find.text('更多 AI 字幕转录'), findsOneWidget);
     expect(find.text('优先客户支持'), findsOneWidget);
     expect(
-      tester.getTopLeft(find.text('更多 AI 复述评估')).dy <
+      tester.getTopLeft(find.text('无限 AI 复述评估')).dy <
+          tester.getTopLeft(find.text('更多 AI 字幕转录')).dy,
+      isTrue,
+    );
+    expect(
+      tester.getTopLeft(find.text('更多 AI 字幕转录')).dy <
           tester.getTopLeft(find.text('优先客户支持')).dy,
       isTrue,
     );
@@ -1082,11 +1095,6 @@ void main() {
       find.text(r'First year US$30.00, then US$59.99/yr'),
     );
     expect(offerSubtitle.maxLines, 1);
-    expect(find.text('Special offer: 50% off your first year'), findsOneWidget);
-    final offerHeadline = tester.widget<Text>(
-      find.text('Special offer: 50% off your first year'),
-    );
-    expect(offerHeadline.style?.color, const Color(0xFF111111));
     expect(
       find.ancestor(
         of: find.byKey(const ValueKey('paywall_special_offer')),
@@ -1145,8 +1153,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Special offer: 50% off your first year'), findsOneWidget);
-    expect(find.text('Special offer: 75% off your first month'), findsNothing);
     expect(find.byKey(const ValueKey('paywall_special_offer')), findsOneWidget);
   });
 
@@ -1172,10 +1178,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Special offer: 75% off your first month'),
-      findsOneWidget,
-    );
     expect(find.text(r'$3.00'), findsOneWidget);
     expect(find.text('/first mo'), findsOneWidget);
     expect(find.text(r'First month $3.00, then $12.00/mo'), findsOneWidget);
@@ -1188,7 +1190,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('paywall_special_offer')), findsNothing);
-    expect(find.textContaining('Special offer:'), findsNothing);
   });
 
   testWidgets('顶部优惠条：intro offer 价格不低于续费价时不显示', (tester) async {
@@ -1212,8 +1213,6 @@ void main() {
       _harness(state: const EntitlementState.free(), plans: promoPlans),
     );
     await tester.pumpAndSettle();
-
-    expect(find.textContaining('Special offer:'), findsNothing);
   });
 
   testWidgets('小屏购买区保持紧凑，CTA 可见且法律链接弱化显示', (tester) async {
