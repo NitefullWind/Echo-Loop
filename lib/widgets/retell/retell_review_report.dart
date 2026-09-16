@@ -299,12 +299,13 @@ class _ReviewRecordingButton extends StatelessWidget {
     required this.accent,
   });
 
-  Future<void> _handleTap() async {
+  Future<void> _handleTap(BuildContext context) async {
     if (preview.isPlaying) {
       await preview.stop();
       return;
     }
     await onBeforePlayback();
+    if (!context.mounted) return;
     await preview.play(recordingPath);
   }
 
@@ -317,7 +318,7 @@ class _ReviewRecordingButton extends StatelessWidget {
         tooltip: isPlaying
             ? l10n.retellAiReviewStopRecording
             : l10n.retellAiReviewPlayRecording,
-        onPressed: _handleTap,
+        onPressed: () => _handleTap(context),
         // 收一档尺寸：满饱和的实心圆本来就重，默认尺寸下它比评级词还抢眼。
         iconSize: 20,
         style: IconButton.styleFrom(

@@ -46,22 +46,29 @@ Future<void> showRetellReviewSheet(
   required Future<void> Function() onRetry,
   required Future<void> Function() onUpgrade,
   required Future<void> Function() onSignIn,
-}) => showModalBottomSheet<void>(
-  context: context,
-  isScrollControlled: true,
-  backgroundColor: Theme.of(context).colorScheme.surface,
-  shape: const RoundedRectangleBorder(
-    borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-  ),
-  builder: (_) => _RetellReviewSheet(
-    recordingPath: recordingPath,
-    preview: preview,
-    onBeforePlayback: onBeforePlayback,
-    onRetry: onRetry,
-    onUpgrade: onUpgrade,
-    onSignIn: onSignIn,
-  ),
-);
+}) async {
+  try {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => _RetellReviewSheet(
+        recordingPath: recordingPath,
+        preview: preview,
+        onBeforePlayback: onBeforePlayback,
+        onRetry: onRetry,
+        onUpgrade: onUpgrade,
+        onSignIn: onSignIn,
+      ),
+    );
+  } finally {
+    // 试听控制器归页面所有，弹窗关闭后必须主动停止，避免页面仍存活时录音继续播放。
+    await preview.stop();
+  }
+}
 
 class _RetellReviewSheet extends ConsumerWidget {
   final String recordingPath;

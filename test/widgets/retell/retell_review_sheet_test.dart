@@ -25,16 +25,22 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// 不触碰平台的播放替身：[play] 返回可控 Future，便于分别断言播放中与播放结束两态。
 class _FakePlaybackService extends AudioPlaybackService {
+  final List<String> playedFiles = [];
   Completer<void>? _completer;
+  int stopCalls = 0;
 
   @override
   Future<void> play(String filePath) {
+    playedFiles.add(filePath);
     _completer = Completer<void>();
     return _completer!.future;
   }
 
   @override
-  Future<void> stop() async => _finish();
+  Future<void> stop() async {
+    stopCalls += 1;
+    _finish();
+  }
 
   @override
   Future<void> dispose() async => _finish();
@@ -562,6 +568,106 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
     expect(find.byIcon(Icons.stop_rounded), findsNothing);
+  });
+
+  testWidgets('关闭评估弹窗后停止录音试听', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        Builder(
+          builder: (context) => Center(
+            child: TextButton(
+              onPressed: () => showRetellReviewSheet(
+                context,
+                recordingPath: '/tmp/retell.m4a',
+                preview: preview,
+                onBeforePlayback: () async {},
+                onRetry: () async {},
+                onUpgrade: () async {},
+                onSignIn: () async {},
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+        overrides: [
+          retellReviewEvaluationProvider.overrideWith(
+            () => _FixedReviewController(
+              const RetellReviewEvaluationState(
+                attemptKey: 'retell:a1:0',
+                phase: RetellReviewEvaluationPhase.completed,
+                evaluation: RetellReviewEvaluation(
+                  summary: 'Nice work.',
+                  rating: RetellReviewRating.good,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+    await tester.pump();
+    expect(preview.isPlaying, isTrue);
+
+    await tester.tap(find.byIcon(Icons.close_rounded));
+    await tester.pumpAndSettle();
+
+    expect(playback.stopCalls, 1);
+    expect(preview.isPlaying, isFalse);
+  });
+
+  testWidgets('关闭弹窗后迟到的播放前置回调不会重新启动试听', (tester) async {
+    final beforePlayback = Completer<void>();
+    await tester.pumpWidget(
+      wrap(
+        Builder(
+          builder: (context) => Center(
+            child: TextButton(
+              onPressed: () => showRetellReviewSheet(
+                context,
+                recordingPath: '/tmp/retell.m4a',
+                preview: preview,
+                onBeforePlayback: () => beforePlayback.future,
+                onRetry: () async {},
+                onUpgrade: () async {},
+                onSignIn: () async {},
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+        overrides: [
+          retellReviewEvaluationProvider.overrideWith(
+            () => _FixedReviewController(
+              const RetellReviewEvaluationState(
+                attemptKey: 'retell:a1:0',
+                phase: RetellReviewEvaluationPhase.completed,
+                evaluation: RetellReviewEvaluation(
+                  summary: 'Nice work.',
+                  rating: RetellReviewRating.good,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+    await tester.pump();
+    expect(preview.isPlaying, isFalse);
+
+    await tester.tap(find.byIcon(Icons.close_rounded));
+    await tester.pumpAndSettle();
+    beforePlayback.complete();
+    await tester.pumpAndSettle();
+
+    expect(playback.playedFiles, isEmpty);
   });
 
   testWidgets('转录排在结论与要点之间，默认露一行、点击可展开收起', (tester) async {
