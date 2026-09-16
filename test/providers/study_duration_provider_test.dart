@@ -7,13 +7,13 @@ void main() {
       DailyStudyRecord(
         id: 1,
         date: date,
-        studyTimeSeconds: total,
+        studyTimeSeconds: 0,
         studyTimeMilliseconds: total * 1000,
         inputWords: 0,
         outputWords: 0,
-        inputTimeSeconds: input,
+        inputTimeSeconds: 0,
         inputTimeMilliseconds: input * 1000,
-        outputTimeSeconds: output,
+        outputTimeSeconds: 0,
         outputTimeMilliseconds: output * 1000,
       );
 

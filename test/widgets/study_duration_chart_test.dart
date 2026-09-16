@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:echo_loop/l10n/app_localizations.dart';
 import 'package:drift/native.dart';
 import 'package:echo_loop/database/app_database.dart';
+import 'package:echo_loop/database/daos/study_statistics_dao.dart';
 import 'package:echo_loop/database/providers.dart';
 import 'package:echo_loop/models/study_stage.dart';
 import 'package:echo_loop/services/study_time_service.dart';
@@ -212,9 +213,7 @@ void main() {
     final buckets = List.generate(
       8,
       (index) => StudyDurationBucket(
-        periodStart: currentWeekStart.subtract(
-          Duration(days: (7 - index) * 7),
-        ),
+        periodStart: currentWeekStart.subtract(Duration(days: (7 - index) * 7)),
         periodEnd: currentWeekStart
             .subtract(Duration(days: (7 - index) * 7))
             .add(const Duration(days: 6)),
@@ -249,23 +248,29 @@ void main() {
     testWidgets('$label柱体使用阶段明细并保留独立总量', (tester) async {
       await tester.runAsync(() async {
         for (final day in [1, 2]) {
-          await db.dailyStageStudyRecordDao.upsertAdd(
-            DateTime(2026, 9, day),
-            StudyStage.intensiveListen,
-            studyTime: 120,
-            inputTime: 60,
-            outputTime: 30,
+          await db.studyStatisticsDao.applyDelta(
+            StudyStatisticsDelta(
+              date: DateTime(2026, 9, day),
+              stage: StudyStage.intensiveListen,
+              studyTimeMilliseconds: 120000,
+              inputTimeMilliseconds: 60000,
+              outputTimeMilliseconds: 30000,
+            ),
           );
         }
-        await db.dailyStageStudyRecordDao.upsertAdd(
-          DateTime(2026, 9, 1),
-          StudyStage.savedVocabularyReview,
-          studyTime: 180,
+        await db.studyStatisticsDao.applyDelta(
+          StudyStatisticsDelta(
+            date: DateTime(2026, 9, 1),
+            stage: StudyStage.savedVocabularyReview,
+            studyTimeMilliseconds: 180000,
+          ),
         );
-        await db.dailyStageStudyRecordDao.upsertAdd(
-          DateTime(2026, 9, 1),
-          StudyStage.savedSentencesReview,
-          studyTime: 60,
+        await db.studyStatisticsDao.applyDelta(
+          StudyStatisticsDelta(
+            date: DateTime(2026, 9, 1),
+            stage: StudyStage.savedSentencesReview,
+            studyTimeMilliseconds: 60000,
+          ),
         );
       });
       await tester.pumpWidget(buildChart());

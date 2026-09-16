@@ -349,11 +349,11 @@ class DemoDataSeeder {
           .insert(
             DailyStudyRecordsCompanion.insert(
               date: date,
-              studyTimeSeconds: Value(totalSec),
+              studyTimeMilliseconds: Value(totalSec * 1000),
               inputWords: Value(inputW),
               outputWords: Value(outputW),
-              inputTimeSeconds: Value(inputSec),
-              outputTimeSeconds: Value(outputSec),
+              inputTimeMilliseconds: Value(inputSec * 1000),
+              outputTimeMilliseconds: Value(outputSec * 1000),
             ),
           );
     }
@@ -407,9 +407,9 @@ class DemoDataSeeder {
             DailyStageStudyRecordsCompanion.insert(
               date: date,
               stage: StudyStage.values[stageIndex],
-              studyTimeSeconds: Value(studyTime),
-              inputTimeSeconds: Value(inputTime),
-              outputTimeSeconds: Value(outputTime),
+              studyTimeMilliseconds: Value(studyTime * 1000),
+              inputTimeMilliseconds: Value(inputTime * 1000),
+              outputTimeMilliseconds: Value(outputTime * 1000),
             ),
           );
     }

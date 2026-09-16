@@ -36,7 +36,7 @@ void main() {
       db.learnedWordForms,
     )..where((t) => t.wordForm.equals('Hello'))).get()).single;
     expect(total?.studyTimeMilliseconds, 1500);
-    expect(total?.studyTimeSeconds, 1);
+    expect(total?.studyTimeSeconds, 0);
     expect(total?.inputWords, 2);
     expect(total?.outputWords, 3);
     expect(stage.inputTimeMilliseconds, 500);
@@ -44,7 +44,7 @@ void main() {
     expect(word.firstLearnedAt, DateTime(2026, 9, 8, 10));
   });
 
-  test('亚秒累计不按单次事件取整，旧秒数据作为兼容基线', () async {
+  test('亚秒累计不按单次事件取整，旧秒字段不参与业务写入', () async {
     final date = DateTime(2026, 9, 8);
     for (var i = 0; i < 3; i += 1) {
       await dao.applyDelta(
@@ -57,13 +57,14 @@ void main() {
     }
     var row = await db.dailyStudyRecordDao.getByDate(date);
     expect(row?.studyTimeMilliseconds, 1200);
-    expect(row?.studyTimeSeconds, 1);
+    expect(row?.studyTimeSeconds, 0);
     await db
         .into(db.dailyStudyRecords)
         .insert(
           DailyStudyRecordsCompanion.insert(
             date: DateTime(2026, 9, 9),
             studyTimeSeconds: const Value(2),
+            studyTimeMilliseconds: const Value(2000),
           ),
         );
     await dao.applyDelta(

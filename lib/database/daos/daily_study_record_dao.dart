@@ -16,66 +16,6 @@ class DailyStudyRecordDao extends DatabaseAccessor<AppDatabase>
   /// 截断时间部分，只保留日期
   DateTime _dateOnly(DateTime dt) => DateTime(dt.year, dt.month, dt.day);
 
-  /// UPSERT 累加指定日期的学习统计
-  ///
-  /// 如果该日期不存在则插入新行，否则在现有值上累加。
-  /// 所有参数默认为 0，只传需要增加的字段即可。
-  Future<void> upsertAdd(
-    DateTime date, {
-    int studyTime = 0,
-    int inputWords = 0,
-    int outputWords = 0,
-    int inputTime = 0,
-    int outputTime = 0,
-    int studyTimeMilliseconds = 0,
-    int inputTimeMilliseconds = 0,
-    int outputTimeMilliseconds = 0,
-  }) async {
-    final dateOnly = _dateOnly(date);
-    await transaction(() async {
-      final existing = await (select(
-        dailyStudyRecords,
-      )..where((t) => t.date.equals(dateOnly))).getSingleOrNull();
-
-      if (existing == null) {
-        await into(dailyStudyRecords).insert(
-          DailyStudyRecordsCompanion.insert(
-            date: dateOnly,
-            studyTimeSeconds: Value(studyTime),
-            inputWords: Value(inputWords),
-            outputWords: Value(outputWords),
-            inputTimeSeconds: Value(inputTime),
-            outputTimeSeconds: Value(outputTime),
-            studyTimeMilliseconds: Value(studyTimeMilliseconds),
-            inputTimeMilliseconds: Value(inputTimeMilliseconds),
-            outputTimeMilliseconds: Value(outputTimeMilliseconds),
-          ),
-        );
-      } else {
-        await (update(
-          dailyStudyRecords,
-        )..where((t) => t.id.equals(existing.id))).write(
-          DailyStudyRecordsCompanion(
-            studyTimeSeconds: Value(existing.studyTimeSeconds + studyTime),
-            inputWords: Value(existing.inputWords + inputWords),
-            outputWords: Value(existing.outputWords + outputWords),
-            inputTimeSeconds: Value(existing.inputTimeSeconds + inputTime),
-            outputTimeSeconds: Value(existing.outputTimeSeconds + outputTime),
-            studyTimeMilliseconds: Value(
-              existing.studyTimeMilliseconds + studyTimeMilliseconds,
-            ),
-            inputTimeMilliseconds: Value(
-              existing.inputTimeMilliseconds + inputTimeMilliseconds,
-            ),
-            outputTimeMilliseconds: Value(
-              existing.outputTimeMilliseconds + outputTimeMilliseconds,
-            ),
-          ),
-        );
-      }
-    });
-  }
-
   /// 获取指定日期的学习记录
   ///
   /// 不存在时返回 null。
@@ -117,7 +57,7 @@ class DailyStudyRecordDao extends DatabaseAccessor<AppDatabase>
     // 查询今天是否有记录
     final todayRecord = await getByDate(today);
     int streak = 0;
-    if (todayRecord != null && todayRecord.studyTimeSeconds > 0) {
+    if (todayRecord != null && todayRecord.studyTimeMilliseconds > 0) {
       streak = 1;
     }
 
@@ -125,7 +65,7 @@ class DailyStudyRecordDao extends DatabaseAccessor<AppDatabase>
     for (int i = 1; i <= 365; i++) {
       final date = today.subtract(Duration(days: i));
       final record = await getByDate(date);
-      if (record == null || record.studyTimeSeconds <= 0) break;
+      if (record == null || record.studyTimeMilliseconds <= 0) break;
       streak++;
     }
 

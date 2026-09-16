@@ -153,7 +153,7 @@ class ReviewStatisticsRepository {
       };
       if (stageMatches) {
         secondsByDay[row.date] =
-            (secondsByDay[row.date] ?? 0) + row.studyTimeSeconds;
+            (secondsByDay[row.date] ?? 0) + row.studyTimeMilliseconds ~/ 1000;
       }
     }
     final trend = List.generate(30, (index) {

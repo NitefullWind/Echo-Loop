@@ -6,13 +6,13 @@ part 'monthly_study_records_provider.g.dart';
 
 /// 月度某天的学习摘要
 class MonthDayRecord {
-  /// 当日学习时长（秒）
+  /// 当日学习时长（秒），由数据库毫秒真值转换。
   final int studyTimeSeconds;
 
-  /// 当日输入时间（秒）
+  /// 当日输入时间（秒），由数据库毫秒真值转换。
   final int inputTimeSeconds;
 
-  /// 当日输出时间（秒）
+  /// 当日输出时间（秒），由数据库毫秒真值转换。
   final int outputTimeSeconds;
 
   const MonthDayRecord({
@@ -42,11 +42,11 @@ Future<Map<int, MonthDayRecord>> monthlyStudyRecords(
 
   final map = <int, MonthDayRecord>{};
   for (final r in records) {
-    if (r.studyTimeSeconds > 0) {
+    if (r.studyTimeMilliseconds > 0) {
       map[r.date.day] = MonthDayRecord(
-        studyTimeSeconds: r.studyTimeSeconds,
-        inputTimeSeconds: r.inputTimeSeconds,
-        outputTimeSeconds: r.outputTimeSeconds,
+        studyTimeSeconds: r.studyTimeMilliseconds ~/ 1000,
+        inputTimeSeconds: r.inputTimeMilliseconds ~/ 1000,
+        outputTimeSeconds: r.outputTimeMilliseconds ~/ 1000,
       );
     }
   }

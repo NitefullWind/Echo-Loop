@@ -69,7 +69,7 @@ void main() {
     final record = records.singleWhere(
       (item) => item.stage == StudyStage.savedSentencesReview,
     );
-    expect(record.studyTimeSeconds, greaterThanOrEqualTo(1));
+    expect(record.studyTimeMilliseconds, greaterThanOrEqualTo(1000));
     await timer.dispose();
   });
 

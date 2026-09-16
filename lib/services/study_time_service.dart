@@ -255,14 +255,11 @@ class StudyTimeService {
 
   static final RegExp _wordPattern = RegExp(r"[A-Za-z]+(?:['’-][A-Za-z]+)*");
 
-  /// 获取指定日期的学习时长（秒）
+  /// 获取指定日期的学习时长（秒），由毫秒真值转换。
   Future<int> getStudyTime(DateTime date) async {
     final record = await _afterWrites(() => _dao.getByDate(date));
     if (record == null) return 0;
-    return _durationSeconds(
-      record.studyTimeMilliseconds,
-      record.studyTimeSeconds,
-    );
+    return _durationSeconds(record.studyTimeMilliseconds);
   }
 
   /// 获取今日学习时长（秒）
@@ -287,10 +284,7 @@ class StudyTimeService {
     final Map<int, int> dayMap = {};
     for (final r in records) {
       final key = _dayKey(r.date);
-      dayMap[key] = _durationSeconds(
-        r.studyTimeMilliseconds,
-        r.studyTimeSeconds,
-      );
+      dayMap[key] = _durationSeconds(r.studyTimeMilliseconds);
     }
 
     final result = <int>[];
@@ -310,7 +304,7 @@ class StudyTimeService {
 
     int total = 0;
     for (final r in records) {
-      total += _durationSeconds(r.studyTimeMilliseconds, r.studyTimeSeconds);
+      total += _durationSeconds(r.studyTimeMilliseconds);
     }
     return total;
   }
@@ -343,10 +337,7 @@ class StudyTimeService {
   Future<int> getInputTime(DateTime date) async {
     final record = await _afterWrites(() => _dao.getByDate(date));
     if (record == null) return 0;
-    return _durationSeconds(
-      record.inputTimeMilliseconds,
-      record.inputTimeSeconds,
-    );
+    return _durationSeconds(record.inputTimeMilliseconds);
   }
 
   /// 获取今日输入时间（秒）
@@ -362,10 +353,7 @@ class StudyTimeService {
 
     final Map<int, int> dayMap = {};
     for (final r in records) {
-      dayMap[_dayKey(r.date)] = _durationSeconds(
-        r.inputTimeMilliseconds,
-        r.inputTimeSeconds,
-      );
+      dayMap[_dayKey(r.date)] = _durationSeconds(r.inputTimeMilliseconds);
     }
 
     final result = <int>[];
@@ -382,10 +370,7 @@ class StudyTimeService {
   Future<int> getOutputTime(DateTime date) async {
     final record = await _afterWrites(() => _dao.getByDate(date));
     if (record == null) return 0;
-    return _durationSeconds(
-      record.outputTimeMilliseconds,
-      record.outputTimeSeconds,
-    );
+    return _durationSeconds(record.outputTimeMilliseconds);
   }
 
   /// 获取今日输出时间（秒）
@@ -401,10 +386,7 @@ class StudyTimeService {
 
     final Map<int, int> dayMap = {};
     for (final r in records) {
-      dayMap[_dayKey(r.date)] = _durationSeconds(
-        r.outputTimeMilliseconds,
-        r.outputTimeSeconds,
-      );
+      dayMap[_dayKey(r.date)] = _durationSeconds(r.outputTimeMilliseconds);
     }
 
     final result = <int>[];
@@ -433,22 +415,13 @@ class StudyTimeService {
         stage: record.stage,
         studyTimeSeconds:
             (previous?.studyTimeSeconds ?? 0) +
-            _durationSeconds(
-              record.studyTimeMilliseconds,
-              record.studyTimeSeconds,
-            ),
+            _durationSeconds(record.studyTimeMilliseconds),
         inputTimeSeconds:
             (previous?.inputTimeSeconds ?? 0) +
-            _durationSeconds(
-              record.inputTimeMilliseconds,
-              record.inputTimeSeconds,
-            ),
+            _durationSeconds(record.inputTimeMilliseconds),
         outputTimeSeconds:
             (previous?.outputTimeSeconds ?? 0) +
-            _durationSeconds(
-              record.outputTimeMilliseconds,
-              record.outputTimeSeconds,
-            ),
+            _durationSeconds(record.outputTimeMilliseconds),
       );
     }
     return [
@@ -470,18 +443,9 @@ class StudyTimeService {
         .map(
           (r) => DailyStageStudyRecordData(
             stage: r.stage,
-            studyTimeSeconds: _durationSeconds(
-              r.studyTimeMilliseconds,
-              r.studyTimeSeconds,
-            ),
-            inputTimeSeconds: _durationSeconds(
-              r.inputTimeMilliseconds,
-              r.inputTimeSeconds,
-            ),
-            outputTimeSeconds: _durationSeconds(
-              r.outputTimeMilliseconds,
-              r.outputTimeSeconds,
-            ),
+            studyTimeSeconds: _durationSeconds(r.studyTimeMilliseconds),
+            inputTimeSeconds: _durationSeconds(r.inputTimeMilliseconds),
+            outputTimeSeconds: _durationSeconds(r.outputTimeMilliseconds),
           ),
         )
         .toList();
@@ -492,26 +456,16 @@ class StudyTimeService {
     final record = await _afterWrites(() => _dao.getByDate(date));
     if (record == null) return null;
     return DailyTotalData(
-      studyTimeSeconds: _durationSeconds(
-        record.studyTimeMilliseconds,
-        record.studyTimeSeconds,
-      ),
-      inputTimeSeconds: _durationSeconds(
-        record.inputTimeMilliseconds,
-        record.inputTimeSeconds,
-      ),
-      outputTimeSeconds: _durationSeconds(
-        record.outputTimeMilliseconds,
-        record.outputTimeSeconds,
-      ),
+      studyTimeSeconds: _durationSeconds(record.studyTimeMilliseconds),
+      inputTimeSeconds: _durationSeconds(record.inputTimeMilliseconds),
+      outputTimeSeconds: _durationSeconds(record.outputTimeMilliseconds),
     );
   }
 
   /// 截断时间部分，只保留日期
   DateTime _dateOnly(DateTime dt) => DateTime(dt.year, dt.month, dt.day);
 
-  int _durationSeconds(int milliseconds, int legacySeconds) =>
-      milliseconds > 0 ? milliseconds ~/ 1000 : legacySeconds;
+  int _durationSeconds(int milliseconds) => milliseconds ~/ 1000;
 
   /// 将日期转换为用于 Map key 的整数（yyyymmdd）
   int _dayKey(DateTime dt) => dt.year * 10000 + dt.month * 100 + dt.day;

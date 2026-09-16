@@ -66,9 +66,9 @@ class StudyDurationRepository {
     for (final record in valid) {
       final key = _periodStart(record.date, granularity);
       final value = values.putIfAbsent(key, () => [0, 0, 0]);
-      value[0] += math.max(record.studyTimeSeconds, 0);
-      value[1] += math.max(record.inputTimeSeconds, 0);
-      value[2] += math.max(record.outputTimeSeconds, 0);
+      value[0] += math.max(record.studyTimeMilliseconds ~/ 1000, 0);
+      value[1] += math.max(record.inputTimeMilliseconds ~/ 1000, 0);
+      value[2] += math.max(record.outputTimeMilliseconds ~/ 1000, 0);
     }
 
     final result = <StudyDurationBucket>[];
@@ -98,9 +98,9 @@ class StudyDurationRepository {
   }
 
   static bool _hasData(DailyStudyRecord r) =>
-      r.studyTimeSeconds > 0 ||
-      r.inputTimeSeconds > 0 ||
-      r.outputTimeSeconds > 0;
+      r.studyTimeMilliseconds > 0 ||
+      r.inputTimeMilliseconds > 0 ||
+      r.outputTimeMilliseconds > 0;
 
   static DateTime _dateOnly(DateTime date) =>
       DateTime(date.year, date.month, date.day);

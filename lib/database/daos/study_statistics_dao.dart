@@ -42,8 +42,8 @@ final class StudyStatisticsDelta {
 /// 学习统计唯一写入 DAO。
 ///
 /// [applyDelta] 把日总量、阶段时长和词形放进同一个 Drift transaction，
-/// 任何一步失败都会回滚整个事件。时长毫秒字段是唯一真值，旧秒字段只
-/// 在计算兼容基线时读取。
+/// 任何一步失败都会回滚整个事件。时长毫秒字段是唯一业务真值，旧秒字段
+/// 仅由历史迁移保留，不在业务写入中读取或更新。
 @DriftAccessor(
   tables: [DailyStudyRecords, DailyStageStudyRecords, LearnedWordForms],
 )
@@ -74,52 +74,28 @@ final class StudyStatisticsDao extends DatabaseAccessor<AppDatabase>
       '''
       INSERT INTO daily_study_records (
         date,
-        study_time_seconds,
         study_time_milliseconds,
         input_words,
         output_words,
-        input_time_seconds,
         input_time_milliseconds,
-        output_time_seconds,
         output_time_milliseconds
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(date) DO UPDATE SET
-        study_time_milliseconds =
-          MAX(daily_study_records.study_time_milliseconds,
-              daily_study_records.study_time_seconds * 1000) +
+        study_time_milliseconds = daily_study_records.study_time_milliseconds +
           excluded.study_time_milliseconds,
-        study_time_seconds =
-          (MAX(daily_study_records.study_time_milliseconds,
-               daily_study_records.study_time_seconds * 1000) +
-           excluded.study_time_milliseconds) / 1000,
         input_words = daily_study_records.input_words + excluded.input_words,
         output_words = daily_study_records.output_words + excluded.output_words,
-        input_time_milliseconds =
-          MAX(daily_study_records.input_time_milliseconds,
-              daily_study_records.input_time_seconds * 1000) +
+        input_time_milliseconds = daily_study_records.input_time_milliseconds +
           excluded.input_time_milliseconds,
-        input_time_seconds =
-          (MAX(daily_study_records.input_time_milliseconds,
-               daily_study_records.input_time_seconds * 1000) +
-           excluded.input_time_milliseconds) / 1000,
-        output_time_milliseconds =
-          MAX(daily_study_records.output_time_milliseconds,
-              daily_study_records.output_time_seconds * 1000) +
-          excluded.output_time_milliseconds,
-        output_time_seconds =
-          (MAX(daily_study_records.output_time_milliseconds,
-               daily_study_records.output_time_seconds * 1000) +
-           excluded.output_time_milliseconds) / 1000
+        output_time_milliseconds = daily_study_records.output_time_milliseconds +
+          excluded.output_time_milliseconds
       ''',
       [
         date.millisecondsSinceEpoch ~/ 1000,
-        delta.studyTimeMilliseconds ~/ 1000,
         delta.studyTimeMilliseconds,
         delta.inputWords,
         delta.outputWords,
-        delta.inputTimeMilliseconds ~/ 1000,
         delta.inputTimeMilliseconds,
-        delta.outputTimeMilliseconds ~/ 1000,
         delta.outputTimeMilliseconds,
       ],
     );
@@ -134,47 +110,23 @@ final class StudyStatisticsDao extends DatabaseAccessor<AppDatabase>
       INSERT INTO daily_stage_study_records (
         date,
         stage,
-        study_time_seconds,
         study_time_milliseconds,
-        input_time_seconds,
         input_time_milliseconds,
-        output_time_seconds,
         output_time_milliseconds
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(date, stage) DO UPDATE SET
-        study_time_milliseconds =
-          MAX(daily_stage_study_records.study_time_milliseconds,
-              daily_stage_study_records.study_time_seconds * 1000) +
+        study_time_milliseconds = daily_stage_study_records.study_time_milliseconds +
           excluded.study_time_milliseconds,
-        study_time_seconds =
-          (MAX(daily_stage_study_records.study_time_milliseconds,
-               daily_stage_study_records.study_time_seconds * 1000) +
-           excluded.study_time_milliseconds) / 1000,
-        input_time_milliseconds =
-          MAX(daily_stage_study_records.input_time_milliseconds,
-              daily_stage_study_records.input_time_seconds * 1000) +
+        input_time_milliseconds = daily_stage_study_records.input_time_milliseconds +
           excluded.input_time_milliseconds,
-        input_time_seconds =
-          (MAX(daily_stage_study_records.input_time_milliseconds,
-               daily_stage_study_records.input_time_seconds * 1000) +
-           excluded.input_time_milliseconds) / 1000,
-        output_time_milliseconds =
-          MAX(daily_stage_study_records.output_time_milliseconds,
-              daily_stage_study_records.output_time_seconds * 1000) +
-          excluded.output_time_milliseconds,
-        output_time_seconds =
-          (MAX(daily_stage_study_records.output_time_milliseconds,
-               daily_stage_study_records.output_time_seconds * 1000) +
-           excluded.output_time_milliseconds) / 1000
+        output_time_milliseconds = daily_stage_study_records.output_time_milliseconds +
+          excluded.output_time_milliseconds
       ''',
       [
         date.millisecondsSinceEpoch ~/ 1000,
         delta.stage.index,
-        delta.studyTimeMilliseconds ~/ 1000,
         delta.studyTimeMilliseconds,
-        delta.inputTimeMilliseconds ~/ 1000,
         delta.inputTimeMilliseconds,
-        delta.outputTimeMilliseconds ~/ 1000,
         delta.outputTimeMilliseconds,
       ],
     );

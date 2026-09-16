@@ -103,7 +103,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
   /// 当前 schema 版本（静态访问，用于导入前版本检查）
-  static const currentSchemaVersion = 52;
+  static const currentSchemaVersion = 53;
 
   @override
   int get schemaVersion => currentSchemaVersion;
@@ -175,6 +175,35 @@ class AppDatabase extends _$AppDatabase {
                   AND output_time_milliseconds = 0
               ''');
             }
+          }
+        }
+        // v52→v53：毫秒字段成为统计时长的唯一业务真值。
+        // v52 迁移在极端的部分写入数据库上可能只完成了部分回填；这里按列
+        // 独立修复，旧秒字段继续保留给旧备份/历史迁移兼容，但不再参与业务计算。
+        if (from < 53) {
+          for (final table in [
+            'daily_study_records',
+            'daily_stage_study_records',
+          ]) {
+            if (!await _tableExists(table)) continue;
+            await customStatement('''
+              UPDATE $table
+              SET study_time_milliseconds = study_time_seconds * 1000
+              WHERE study_time_milliseconds = 0
+                AND study_time_seconds > 0
+            ''');
+            await customStatement('''
+              UPDATE $table
+              SET input_time_milliseconds = input_time_seconds * 1000
+              WHERE input_time_milliseconds = 0
+                AND input_time_seconds > 0
+            ''');
+            await customStatement('''
+              UPDATE $table
+              SET output_time_milliseconds = output_time_seconds * 1000
+              WHERE output_time_milliseconds = 0
+                AND output_time_seconds > 0
+            ''');
           }
         }
         // v49→v50：为收藏单词/意群补稳定的记忆主体 ID，并把收藏句专属的每日
@@ -1245,10 +1274,13 @@ class AppDatabase extends _$AppDatabase {
         DailyStudyRecordsCompanion.insert(
           date: date,
           studyTimeSeconds: Value(data['study_time_'] ?? 0),
+          studyTimeMilliseconds: Value((data['study_time_'] ?? 0) * 1000),
           inputWords: Value(data['input_words_'] ?? 0),
           outputWords: Value(data['output_words_'] ?? 0),
           inputTimeSeconds: Value(data['input_time_'] ?? 0),
+          inputTimeMilliseconds: Value((data['input_time_'] ?? 0) * 1000),
           outputTimeSeconds: Value(data['output_time_'] ?? 0),
+          outputTimeMilliseconds: Value((data['output_time_'] ?? 0) * 1000),
         ),
         mode: InsertMode.insertOrIgnore,
       );

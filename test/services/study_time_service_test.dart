@@ -197,8 +197,8 @@ void main() {
     expect(
       (await db.dailyStudyRecordDao.getByDate(
         DateTime.now(),
-      ))?.studyTimeSeconds,
-      1,
+      ))?.studyTimeMilliseconds,
+      1000,
     );
   });
 

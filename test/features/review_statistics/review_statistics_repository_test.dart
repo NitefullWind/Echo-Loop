@@ -2,6 +2,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:echo_loop/database/app_database.dart';
+import 'package:echo_loop/database/daos/study_statistics_dao.dart';
 import 'package:echo_loop/features/review_statistics/review_statistics_repository.dart';
 import 'package:echo_loop/models/study_stage.dart';
 
@@ -133,20 +134,26 @@ void main() {
 
   test('全部时长仅汇总收藏句子和收藏词汇复习阶段', () async {
     final now = DateTime(2026, 8, 22, 10);
-    await db.dailyStageStudyRecordDao.upsertAdd(
-      now,
-      StudyStage.intensiveListen,
-      studyTime: 90,
+    await db.studyStatisticsDao.applyDelta(
+      StudyStatisticsDelta(
+        date: DateTime(2026, 8, 22, 10),
+        stage: StudyStage.intensiveListen,
+        studyTimeMilliseconds: 90000,
+      ),
     );
-    await db.dailyStageStudyRecordDao.upsertAdd(
-      now,
-      StudyStage.savedSentencesReview,
-      studyTime: 30,
+    await db.studyStatisticsDao.applyDelta(
+      StudyStatisticsDelta(
+        date: DateTime(2026, 8, 22, 10),
+        stage: StudyStage.savedSentencesReview,
+        studyTimeMilliseconds: 30000,
+      ),
     );
-    await db.dailyStageStudyRecordDao.upsertAdd(
-      now,
-      StudyStage.savedVocabularyReview,
-      studyTime: 60,
+    await db.studyStatisticsDao.applyDelta(
+      StudyStatisticsDelta(
+        date: DateTime(2026, 8, 22, 10),
+        stage: StudyStage.savedVocabularyReview,
+        studyTimeMilliseconds: 60000,
+      ),
     );
 
     final repository = ReviewStatisticsRepository(db);
