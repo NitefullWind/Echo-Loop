@@ -78,6 +78,8 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
   @override
   void initState() {
     super.initState();
+    // Paywall 不使用通用 screen_view 生产事件，单独记录会员页进入漏斗。
+    ref.read(analyticsServiceProvider).track(Events.subscriptionPageViewed);
     // 页面首帧优先消费会话缓存，再让 SDK 在后台校验当前 offering/storefront。
     Future.microtask(() {
       if (!mounted) return;

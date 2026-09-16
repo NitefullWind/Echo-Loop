@@ -247,6 +247,9 @@ abstract class Events {
       'notification_settings_open_tapped';
 
   // ── 核心商业化与数据安全漏斗 ──
+  /// 用户打开会员订阅页
+  static const subscriptionPageViewed = 'subscription_page_viewed';
+
   static const subscriptionCheckoutStarted = 'subscription_checkout_started';
   static const subscriptionPurchaseResult = 'subscription_purchase_result';
   static const chatTurnResult = 'chat_turn_result';

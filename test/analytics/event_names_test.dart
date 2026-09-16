@@ -40,6 +40,7 @@ void main() {
         Events.reminderUpdated,
         Events.asrSettingChanged,
         Events.studyTimeViewed,
+        Events.subscriptionPageViewed,
       ];
 
       for (final name in events) {
@@ -84,6 +85,7 @@ void main() {
         Events.reminderUpdated,
         Events.asrSettingChanged,
         Events.studyTimeViewed,
+        Events.subscriptionPageViewed,
       ];
 
       final unique = events.toSet();
@@ -127,6 +129,7 @@ void main() {
         Events.reminderUpdated,
         Events.asrSettingChanged,
         Events.studyTimeViewed,
+        Events.subscriptionPageViewed,
       ];
 
       final pattern = RegExp(r'^[a-z][a-z0-9_]*$');

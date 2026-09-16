@@ -31,6 +31,7 @@ abstract final class PostHogEventPolicy {
     Events.transcriptionComplete,
     Events.subtitleEditorOpened,
     Events.subtitleUploaded,
+    Events.subscriptionPageViewed,
     Events.subscriptionCheckoutStarted,
     Events.subscriptionPurchaseResult,
     Events.chatTurnResult,

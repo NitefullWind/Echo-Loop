@@ -14,6 +14,10 @@ void main() {
       expect(PostHogEventPolicy.shouldCapture(Events.audioUpload), isFalse);
       expect(PostHogEventPolicy.shouldCapture(Events.screenView), isFalse);
       expect(
+        PostHogEventPolicy.shouldCapture(Events.subscriptionPageViewed),
+        isTrue,
+      );
+      expect(
         PostHogEventPolicy.shouldCapture(Events.blindListenComplete),
         isTrue,
       );
