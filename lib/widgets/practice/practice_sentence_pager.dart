@@ -76,6 +76,7 @@ class _PracticeSentencePagerState extends State<PracticeSentencePager> {
   final PageController _pageController = PageController();
   bool _synced = false;
   bool _programmatic = false;
+  bool _transitionInFlight = false;
   int? _pendingTarget;
   int? _pendingSource;
 
@@ -127,6 +128,9 @@ class _PracticeSentencePagerState extends State<PracticeSentencePager> {
   void _syncPage(int targetIndex) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_pageController.hasClients) return;
+      if (_transitionInFlight || widget.isTransitionLocked) {
+        return;
+      }
       final current = _pageController.page?.round();
       if (current == targetIndex) {
         _synced = true;
@@ -166,7 +170,9 @@ class _PracticeSentencePagerState extends State<PracticeSentencePager> {
     if (notification.depth != 0 ||
         notification.metrics.axis != Axis.horizontal ||
         notification is! ScrollEndNotification ||
-        _programmatic) {
+        _programmatic ||
+        _transitionInFlight ||
+        widget.isTransitionLocked) {
       return false;
     }
     final target = _pendingTarget;
@@ -176,15 +182,43 @@ class _PracticeSentencePagerState extends State<PracticeSentencePager> {
     if (target == null || source == null) return false;
     if (_pageController.page?.round() != target) return false;
     if (widget.currentIndex != source) return false;
-    unawaited(widget.onSentenceSettled(target));
+    _transitionInFlight = true;
+    unawaited(_commitSettledSentence(target));
     return false;
+  }
+
+  /// 提交用户滑动产生的目标句，并在异步业务提交完成前保持分页锁定。
+  Future<void> _commitSettledSentence(int target) async {
+    try {
+      await widget.onSentenceSettled(target);
+    } finally {
+      _transitionInFlight = false;
+    }
   }
 
   Future<void> animateAndCommit(
     int targetIndex, {
     required Future<void> Function() commit,
   }) async {
-    if (!mounted || _programmatic || _pendingTarget != null) return;
+    if (!mounted ||
+        _programmatic ||
+        _pendingTarget != null ||
+        _transitionInFlight ||
+        widget.isTransitionLocked) {
+      return;
+    }
+    _transitionInFlight = true;
+    try {
+      await _animateAndCommit(targetIndex, commit: commit);
+    } finally {
+      _transitionInFlight = false;
+    }
+  }
+
+  Future<void> _animateAndCommit(
+    int targetIndex, {
+    required Future<void> Function() commit,
+  }) async {
     if (targetIndex == widget.currentIndex) return;
     if (!_pageController.hasClients) {
       await commit();

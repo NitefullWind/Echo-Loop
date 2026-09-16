@@ -22,6 +22,7 @@ class ListenAndRepeatSessionState extends RepeatFlowState {
   final bool usesMediaEngine;
 
   const ListenAndRepeatSessionState({
+    super.sessionId,
     super.phase,
     super.sentenceIndex,
     super.totalSentences,
@@ -32,6 +33,9 @@ class ListenAndRepeatSessionState extends RepeatFlowState {
     super.recordingScore,
     super.isReviewPlaybackActive,
     super.flowToken,
+    super.controlMode,
+    super.postRecordingAction,
+    super.isTransitioning,
     this.isFreePlay = false,
     this.currentSentenceBookmarked = false,
     this.usesMediaEngine = false,
@@ -45,6 +49,7 @@ class ListenAndRepeatSessionState extends RepeatFlowState {
     bool usesMediaEngine = false,
   }) {
     return ListenAndRepeatSessionState(
+      sessionId: flow.sessionId,
       phase: flow.phase,
       sentenceIndex: flow.sentenceIndex,
       totalSentences: flow.totalSentences,
@@ -55,6 +60,9 @@ class ListenAndRepeatSessionState extends RepeatFlowState {
       recordingScore: flow.recordingScore,
       isReviewPlaybackActive: flow.isReviewPlaybackActive,
       flowToken: flow.flowToken,
+      controlMode: flow.controlMode,
+      postRecordingAction: flow.postRecordingAction,
+      isTransitioning: flow.isTransitioning,
       isFreePlay: isFreePlay,
       currentSentenceBookmarked: currentSentenceBookmarked,
       usesMediaEngine: usesMediaEngine,
@@ -63,6 +71,7 @@ class ListenAndRepeatSessionState extends RepeatFlowState {
 
   @override
   ListenAndRepeatSessionState copyWith({
+    int? sessionId,
     RepeatFlowPhase? phase,
     int? sentenceIndex,
     int? totalSentences,
@@ -73,11 +82,15 @@ class ListenAndRepeatSessionState extends RepeatFlowState {
     Object? recordingScore = _noChange,
     bool? isReviewPlaybackActive,
     int? flowToken,
+    RepeatControlMode? controlMode,
+    RepeatPostRecordingAction? postRecordingAction,
+    bool? isTransitioning,
     bool? isFreePlay,
     bool? currentSentenceBookmarked,
     bool? usesMediaEngine,
   }) {
     return ListenAndRepeatSessionState(
+      sessionId: sessionId ?? this.sessionId,
       phase: phase ?? this.phase,
       sentenceIndex: sentenceIndex ?? this.sentenceIndex,
       totalSentences: totalSentences ?? this.totalSentences,
@@ -93,6 +106,9 @@ class ListenAndRepeatSessionState extends RepeatFlowState {
       isReviewPlaybackActive:
           isReviewPlaybackActive ?? this.isReviewPlaybackActive,
       flowToken: flowToken ?? this.flowToken,
+      controlMode: controlMode ?? this.controlMode,
+      postRecordingAction: postRecordingAction ?? this.postRecordingAction,
+      isTransitioning: isTransitioning ?? this.isTransitioning,
       isFreePlay: isFreePlay ?? this.isFreePlay,
       currentSentenceBookmarked:
           currentSentenceBookmarked ?? this.currentSentenceBookmarked,

@@ -49,7 +49,14 @@ class StudyTimeService {
         studyTimeMilliseconds: studyDuration.inMilliseconds,
         inputTimeMilliseconds: inputDuration.inMilliseconds,
       ),
-    );
+    ).then((_) {
+      AppLogger.log(
+        'StudyStatistics',
+        'event=session_duration_persisted stage=${stage.name} '
+            'studyDurationMs=${studyDuration.inMilliseconds} '
+            'inputDurationMs=${inputDuration.inMilliseconds}',
+      );
+    });
   }
 
   /// 记录有效学习时长；是否允许后台计时由具体学习任务和计时器决定。
@@ -112,7 +119,14 @@ class StudyTimeService {
         outputTimeMilliseconds: duration.inMilliseconds,
         outputWords: producedWordCount,
       ),
-    );
+    ).then((_) {
+      AppLogger.log(
+        'StudyStatistics',
+        'event=output_persisted stage=${stage.name} '
+            'durationMs=${duration.inMilliseconds} '
+            'outputWords=$producedWordCount',
+      );
+    });
   }
 
   /// 记录输出词数事件。

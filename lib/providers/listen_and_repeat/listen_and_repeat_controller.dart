@@ -41,6 +41,7 @@ import '../media_engine/media_engine_provider.dart';
 import '../media_engine/media_sense_group_range_playback.dart';
 import '../repeat_flow/repeat_flow_engine.dart';
 import '../repeat_flow/repeat_flow_phase.dart';
+import '../repeat_flow/repeat_flow_state.dart';
 import '../speech/speech_recording_controller.dart';
 import '../listening_practice/bookmark_manager.dart';
 import '../favorite_sentence_lifecycle_provider.dart';
@@ -120,7 +121,10 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
               '句${next.sentenceIndex + 1}/${next.totalSentences} '
               '遍${next.repeatIndex + 1}/${next.totalRepeats} | '
               '录音=$recPhase | '
-              'token=${next.flowToken}',
+              'sessionId=${next.sessionId} token=${next.flowToken} '
+              'controlMode=${next.controlMode.name} '
+              'postRecordingAction=${next.postRecordingAction.name} '
+              'transitioning=${next.isTransitioning}',
         );
       }
     });
@@ -143,6 +147,42 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
   /// [smartSpeed] 按当前难度/阶段算出的动态默认速度;用户未在偏好里设过速度时用它。
   /// 句间停顿/遍数等其余设置由按槽位偏好 [intensiveListenPrefsProvider] resolve 出。
   Future<void> initialize({
+    required String audioItemId,
+    required List<Sentence> allSentences,
+    required bool isFreePlay,
+    ListenAndRepeatScope scope = ListenAndRepeatScope.difficultOnly,
+    double smartSpeed = 1.0,
+    LearningStage? stage,
+    SentencePlaybackDriver? playbackDriver,
+    bool usesMediaEngine = false,
+  }) async {
+    AppLogger.log(
+      'L&R Session',
+      'event=open_begin audioItemId=$audioItemId isFreePlay=$isFreePlay '
+          'usesMediaEngine=$usesMediaEngine',
+    );
+    try {
+      await _initialize(
+        audioItemId: audioItemId,
+        allSentences: allSentences,
+        isFreePlay: isFreePlay,
+        scope: scope,
+        smartSpeed: smartSpeed,
+        stage: stage,
+        playbackDriver: playbackDriver,
+        usesMediaEngine: usesMediaEngine,
+      );
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'L&R Session',
+        'event=open_failed audioItemId=$audioItemId '
+            'usesMediaEngine=$usesMediaEngine error=$error\n$stackTrace',
+      );
+      rethrow;
+    }
+  }
+
+  Future<void> _initialize({
     required String audioItemId,
     required List<Sentence> allSentences,
     required bool isFreePlay,
@@ -279,8 +319,13 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
     _studySessionTimer = timer;
     timer.start();
     AppLogger.log(
-      'ListenAndRepeatStats',
-      'session.ready audioItemId=$audioItemId '
+      'L&R Session',
+      'event=timer_started sessionId=${state.sessionId} '
+          'audioItemId=$audioItemId',
+    );
+    AppLogger.log(
+      'L&R Session',
+      'event=ready sessionId=${state.sessionId} audioItemId=$audioItemId '
           'sentenceCount=${practiceSentences.length} '
           'isFreePlay=$isFreePlay usesMediaEngine=$usesMediaEngine',
     );
@@ -452,13 +497,20 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
   void onUserInteraction() => _engine.onUserInteraction();
 
   /// 下一句
-  Future<void> nextSentence() async => _engine.nextSentence();
+  Future<void> nextSentence({
+    RepeatNavigationSource source = RepeatNavigationSource.nextArrow,
+  }) async => _engine.nextSentence(source: source);
 
   /// 上一句
-  Future<void> previousSentence() async => _engine.previousSentence();
+  Future<void> previousSentence({
+    RepeatNavigationSource source = RepeatNavigationSource.previousArrow,
+  }) async => _engine.previousSentence(source: source);
 
   /// 跳转到指定句子（0-based，供进度条拖动跳转使用）
-  Future<void> goToSentence(int index) async => _engine.goToSentence(index);
+  Future<void> goToSentence(
+    int index, {
+    RepeatNavigationSource source = RepeatNavigationSource.explicit,
+  }) async => _engine.goToSentence(index, source: source);
 
   /// 录音按钮点击
   Future<void> onRecordButtonTapped() async => _engine.onRecordButtonTapped();
@@ -721,8 +773,15 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
     final wasPrepared = _sessionPrepared;
     final studyDuration = elapsed;
     final timer = _studySessionTimer;
+    final sessionId = state.sessionId;
     final usesMediaEngine = _usesMediaEngine;
     final manageForegroundAudioEngine = _manageForegroundAudioEngine;
+    AppLogger.log(
+      'L&R Session',
+      'event=close_begin sessionId=$sessionId '
+          'audioItemId=$audioItemId elapsedMs=${studyDuration.inMilliseconds} '
+          'timerReady=${timer != null}',
+    );
 
     _studySessionGeneration += 1;
     _mediaEntryGeneration += 1;
@@ -761,8 +820,20 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
       );
     }
 
+    if (timer != null) {
+      AppLogger.log(
+        'L&R Session',
+        'event=timer_flush_begin sessionId=$sessionId',
+      );
+    }
     try {
       await timer?.dispose();
+      if (timer != null) {
+        AppLogger.log(
+          'L&R Session',
+          'event=timer_flush_complete sessionId=$sessionId',
+        );
+      }
     } catch (error, stackTrace) {
       AppLogger.log(
         'StudyExit',
@@ -772,7 +843,15 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
       if (identical(_studySessionTimer, timer)) _studySessionTimer = null;
     }
     try {
+      AppLogger.log(
+        'L&R Session',
+        'event=stats_flush_begin sessionId=$sessionId',
+      );
       await _studyTimeService.flush();
+      AppLogger.log(
+        'L&R Session',
+        'event=stats_flush_complete sessionId=$sessionId',
+      );
     } catch (error, stackTrace) {
       AppLogger.log(
         'StudyExit',
@@ -854,6 +933,11 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
     _studyAudioItemId = null;
     _sentences = [];
     state = const ListenAndRepeatSessionState();
+    AppLogger.log(
+      'L&R Session',
+      'event=close_complete sessionId=$sessionId '
+          'audioItemId=$audioItemId',
+    );
     AppLogger.log('StudyExit', 'listen and repeat cleanup complete');
   }
 
@@ -979,7 +1063,10 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
         'L&R Rec',
         '${prev.phase.name} → ${next.phase.name} | '
             'attempt=${next.currentAttempt != null} | '
-            'score=${next.currentAttempt?.score}',
+            'score=${next.currentAttempt?.score} | '
+            'promptId=${next.promptId} | '
+            'sessionId=${_engine.state.sessionId} '
+            'flowToken=${_engine.state.flowToken}',
       );
     }
 
@@ -988,7 +1075,11 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
         next.phase == SpeechRecordingPhase.idle &&
         next.currentAttempt != null) {
       final attempt = next.currentAttempt!;
-      _engine.onRecordingFinished(attempt.filePath, attempt.score);
+      _engine.onRecordingFinished(
+        attempt.filePath,
+        attempt.score,
+        promptId: attempt.promptId,
+      );
       ref
           .read(usageTrackerProvider)
           .record(
@@ -1004,8 +1095,9 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
     // 录音取消/超时 → 通知 engine
     if (state.phase is Recording &&
         next.phase == SpeechRecordingPhase.idle &&
-        next.currentAttempt == null) {
-      _engine.onRecordingCancelled();
+        next.currentAttempt == null &&
+        next.promptId != null) {
+      _engine.onRecordingCancelled(promptId: next.promptId);
     }
   }
 }

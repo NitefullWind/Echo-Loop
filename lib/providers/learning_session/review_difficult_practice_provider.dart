@@ -906,7 +906,11 @@ class ReviewDifficultPractice extends _$ReviewDifficultPractice {
         next.phase == SpeechRecordingPhase.idle &&
         next.currentAttempt != null) {
       final attempt = next.currentAttempt!;
-      _repeatEngine!.onRecordingFinished(attempt.filePath, attempt.score);
+      _repeatEngine!.onRecordingFinished(
+        attempt.filePath,
+        attempt.score,
+        promptId: attempt.promptId,
+      );
       ref
           .read(usageTrackerProvider)
           .record(
@@ -924,8 +928,9 @@ class ReviewDifficultPractice extends _$ReviewDifficultPractice {
     // 录音取消/超时
     if (_repeatEngine!.state.phase is Recording &&
         next.phase == SpeechRecordingPhase.idle &&
-        next.currentAttempt == null) {
-      _repeatEngine!.onRecordingCancelled();
+        next.currentAttempt == null &&
+        next.promptId != null) {
+      _repeatEngine!.onRecordingCancelled(promptId: next.promptId);
     }
   }
 

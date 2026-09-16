@@ -32,6 +32,7 @@ import '../providers/listen_and_repeat/listen_and_repeat_controller.dart';
 import '../providers/listen_and_repeat/listen_and_repeat_phase.dart';
 import '../providers/listen_and_repeat/listen_and_repeat_settings_provider.dart';
 import '../providers/listen_and_repeat/listen_and_repeat_session_state.dart';
+import '../providers/repeat_flow/repeat_flow_state.dart';
 import '../providers/sentence_ai_provider.dart';
 import '../services/app_logger.dart';
 import '../theme/app_theme.dart';
@@ -443,7 +444,8 @@ class _ListenAndRepeatPlayerScreenState
     unawaited(
       _sentencePager.animateAndCommit(
         state.sentenceIndex - 1,
-        commit: ctrl.previousSentence,
+        commit: () =>
+            ctrl.previousSentence(source: RepeatNavigationSource.previousArrow),
       ),
     );
   }
@@ -462,7 +464,8 @@ class _ListenAndRepeatPlayerScreenState
     unawaited(
       _sentencePager.animateAndCommit(
         state.sentenceIndex + 1,
-        commit: ctrl.nextSentence,
+        commit: () =>
+            ctrl.nextSentence(source: RepeatNavigationSource.nextArrow),
       ),
     );
   }
@@ -602,7 +605,8 @@ class _ListenAndRepeatPlayerScreenState
                               onBeforeOpen: () {
                                 ref
                                     .read(
-                                    listenAndRepeatControllerProvider.notifier,
+                                      listenAndRepeatControllerProvider
+                                          .notifier,
                                     )
                                     .enterWaitingForUserAfterCurrentPrompt();
                               },
@@ -613,7 +617,8 @@ class _ListenAndRepeatPlayerScreenState
                               onPressed: () {
                                 ref
                                     .read(
-                                    listenAndRepeatControllerProvider.notifier,
+                                      listenAndRepeatControllerProvider
+                                          .notifier,
                                     )
                                     .enterWaitingForUserAfterCurrentPrompt();
                                 showListenAndRepeatSettingsSheet(
@@ -644,7 +649,8 @@ class _ListenAndRepeatPlayerScreenState
                                           ctrl.currentSentence!.startTime,
                                 onSeek: (i) => ref
                                     .read(
-                                    listenAndRepeatControllerProvider.notifier,
+                                      listenAndRepeatControllerProvider
+                                          .notifier,
                                     )
                                     .goToSentence(i),
                               ),
@@ -669,12 +675,18 @@ class _ListenAndRepeatPlayerScreenState
                                   ),
                                   currentIndex: ctrlState.sentenceIndex,
                                   itemCount: ctrl.sentences.length,
-                                  onSentenceSettled: ctrl.goToSentence,
+                                  isTransitionLocked: ctrlState.isTransitioning,
+                                  onSentenceSettled: (index) =>
+                                      ctrl.goToSentence(
+                                        index,
+                                        source: RepeatNavigationSource.swipe,
+                                      ),
                                   itemBuilder: (context, sentenceIndex) {
                                     final sentence =
                                         ctrl.sentences[sentenceIndex];
                                     final isActive =
-                                      sentenceIndex == ctrlState.sentenceIndex;
+                                        sentenceIndex ==
+                                        ctrlState.sentenceIndex;
                                     return Padding(
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: AppSpacing.m,
@@ -692,8 +704,9 @@ class _ListenAndRepeatPlayerScreenState
                                               sentenceStartMs: sentence
                                                   .startTime
                                                   .inMilliseconds,
-                                            sentenceEndMs:
-                                                sentence.endTime.inMilliseconds,
+                                              sentenceEndMs: sentence
+                                                  .endTime
+                                                  .inMilliseconds,
                                               highlightedSegments: isActive
                                                   ? currentAttempt
                                                         ?.referenceSegments
@@ -762,7 +775,8 @@ class _ListenAndRepeatPlayerScreenState
                                 ),
                                 onBeforePlayback: () => ref
                                     .read(
-                                    listenAndRepeatControllerProvider.notifier,
+                                      listenAndRepeatControllerProvider
+                                          .notifier,
                                     )
                                     .prepareForPlayback(),
                               ),

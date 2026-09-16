@@ -23,6 +23,7 @@ import 'package:echo_loop/providers/listen_and_repeat/listen_and_repeat_controll
 import 'package:echo_loop/providers/listen_and_repeat/listen_and_repeat_phase.dart';
 import 'package:echo_loop/providers/listen_and_repeat/listen_and_repeat_settings_provider.dart';
 import 'package:echo_loop/providers/listen_and_repeat/listen_and_repeat_session_state.dart';
+import 'package:echo_loop/providers/repeat_flow/repeat_flow_state.dart';
 import 'package:echo_loop/providers/new_user_guide_provider.dart';
 import 'package:echo_loop/providers/notification_permission_provider.dart';
 import 'package:echo_loop/providers/sentence_ai_provider.dart';
@@ -130,21 +131,28 @@ class _TestListenAndRepeatController extends ListenAndRepeatController {
   }
 
   @override
-  Future<void> nextSentence() async {
+  Future<void> nextSentence({
+    RepeatNavigationSource source = RepeatNavigationSource.nextArrow,
+  }) async {
     nextSentenceCalls += 1;
     if (state.sentenceIndex >= _sentences.length - 1) return;
     state = state.copyWith(sentenceIndex: state.sentenceIndex + 1);
   }
 
   @override
-  Future<void> previousSentence() async {
+  Future<void> previousSentence({
+    RepeatNavigationSource source = RepeatNavigationSource.previousArrow,
+  }) async {
     previousSentenceCalls += 1;
     if (state.sentenceIndex <= 0) return;
     state = state.copyWith(sentenceIndex: state.sentenceIndex - 1);
   }
 
   @override
-  Future<void> goToSentence(int index) async {
+  Future<void> goToSentence(
+    int index, {
+    RepeatNavigationSource source = RepeatNavigationSource.explicit,
+  }) async {
     goToSentenceCalls += 1;
     if (index < 0 || index >= _sentences.length) return;
     state = state.copyWith(sentenceIndex: index);

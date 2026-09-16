@@ -145,6 +145,15 @@ class RepeatFlowEngine {
   /// 句子列表
   List<Sentence> _sentences = [];
 
+  /// 已创建的会话数量，用于生成不会回退的会话标识。
+  int _sessionSequence = 0;
+
+  /// 当前导航事务是否正在提交。
+  bool _navigationInFlight = false;
+
+  /// 导航请求编号，仅用于日志关联。
+  int _navigationRequestSequence = 0;
+
   /// 配置
   late RepeatFlowConfig _config;
 
@@ -153,9 +162,6 @@ class RepeatFlowEngine {
 
   /// 当前原句播放完成后是否转入等待用户状态。
   bool _waitAfterCurrentPrompt = false;
-
-  /// 用户停止过当前句的自动倒计时；切到下一句前不再自动启动遍间等待。
-  bool _userTookOverCurrentSentence = false;
 
   RepeatFlowEngine({
     required this.onStateChanged,
@@ -198,6 +204,7 @@ class RepeatFlowEngine {
   }) {
     _sentences = sentences.map((s) => s.copyWith()).toList();
     _config = config;
+    _sessionSequence += 1;
 
     final safeIndex = _sentences.isEmpty
         ? 0
@@ -206,6 +213,7 @@ class RepeatFlowEngine {
 
     _updateState(
       RepeatFlowState(
+        sessionId: _sessionSequence,
         phase: const Idle(),
         sentenceIndex: safeIndex,
         totalSentences: _sentences.length,
@@ -215,7 +223,18 @@ class RepeatFlowEngine {
             : Duration.zero,
         isReviewPlaybackActive: false,
         flowToken: 1,
+        controlMode: config.isManualMode()
+            ? RepeatControlMode.manual
+            : RepeatControlMode.automatic,
+        postRecordingAction: _defaultPostRecordingAction(),
       ),
+    );
+    _navigationInFlight = false;
+    AppLogger.log(
+      '$logTag Session',
+      'event=prepared sessionId=$_sessionSequence '
+          'sentenceIndex=$safeIndex totalSentences=${_sentences.length} '
+          'controlMode=${_state.controlMode.name}',
     );
   }
 
@@ -241,8 +260,18 @@ class RepeatFlowEngine {
     }
 
     if (phase is WaitingInterval) {
-      _userTookOverCurrentSentence = true;
-      _state = _state.copyWith(flowToken: _state.flowToken + 1);
+      _updateState(
+        _state.copyWith(
+          flowToken: _state.flowToken + 1,
+          postRecordingAction: RepeatPostRecordingAction.waitForUser,
+        ),
+      );
+      AppLogger.log(
+        '$logTag Flow',
+        'event=interrupt sessionId=${_state.sessionId} '
+            'flowToken=${_state.flowToken} sentenceIndex=${_state.sentenceIndex} '
+            'cause=user postRecordingAction=waitForUser',
+      );
     }
 
     _stopActiveResources();
@@ -264,25 +293,32 @@ class RepeatFlowEngine {
   }
 
   /// 下一句
-  Future<void> nextSentence() async {
+  Future<void> nextSentence({
+    RepeatNavigationSource source = RepeatNavigationSource.nextArrow,
+  }) async {
     if (_state.isLastSentence) return;
-    await _jumpToSentence(_state.sentenceIndex + 1);
+    await _jumpToSentence(_state.sentenceIndex + 1, source: source);
   }
 
   /// 上一句
-  Future<void> previousSentence() async {
+  Future<void> previousSentence({
+    RepeatNavigationSource source = RepeatNavigationSource.previousArrow,
+  }) async {
     if (_state.isFirstSentence) return;
-    await _jumpToSentence(_state.sentenceIndex - 1);
+    await _jumpToSentence(_state.sentenceIndex - 1, source: source);
   }
 
   /// 跳转到指定句子（0-based）。
   ///
   /// 供进度条拖动跳转使用：越界自动 clamp，目标与当前相同时直接返回。
-  Future<void> goToSentence(int index) async {
+  Future<void> goToSentence(
+    int index, {
+    RepeatNavigationSource source = RepeatNavigationSource.explicit,
+  }) async {
     if (_sentences.isEmpty) return;
     final target = index.clamp(0, _sentences.length - 1);
     if (target == _state.sentenceIndex) return;
-    await _jumpToSentence(target);
+    await _jumpToSentence(target, source: source);
   }
 
   /// 录音按钮点击
@@ -433,9 +469,10 @@ class RepeatFlowEngine {
   Future<void> replayCurrentSentence() async {
     _waitAfterCurrentPrompt = false;
     _atomicReset();
+    final sessionId = _state.sessionId;
     final flowToken = _state.flowToken;
     await callbacks.clearRecording();
-    if (flowToken != _state.flowToken) return;
+    if (!_isCurrentFlow(sessionId, flowToken)) return;
     _updateState(
       _state.copyWith(
         repeatIndex: _state.repeatIndex + 1,
@@ -458,9 +495,10 @@ class RepeatFlowEngine {
 
     _waitAfterCurrentPrompt = false;
     _atomicReset();
+    final sessionId = _state.sessionId;
     final flowToken = _state.flowToken;
     await callbacks.clearRecording();
-    if (flowToken != _state.flowToken) return;
+    if (!_isCurrentFlow(sessionId, flowToken)) return;
 
     final nextPhase = autoplay
         ? const Idle()
@@ -472,6 +510,10 @@ class RepeatFlowEngine {
         repeatIndex: 0,
         totalRepeats: _config.getRepeatCount(sentence),
         intervalDuration: _config.getIntervalDuration(sentence),
+        controlMode: _config.isManualMode()
+            ? RepeatControlMode.manual
+            : RepeatControlMode.automatic,
+        postRecordingAction: _defaultPostRecordingAction(),
         recordingPath: null,
         recordingScore: null,
         isReviewPlaybackActive: false,
@@ -488,8 +530,20 @@ class RepeatFlowEngine {
   void stopSession() {
     _waitAfterCurrentPrompt = false;
     _atomicReset();
+    _navigationInFlight = false;
     _updateState(
-      _state.copyWith(phase: const Idle(), isReviewPlaybackActive: false),
+      _state.copyWith(
+        phase: const Idle(),
+        isReviewPlaybackActive: false,
+        postRecordingAction: _state.controlMode == RepeatControlMode.manual
+            ? RepeatPostRecordingAction.waitForUser
+            : RepeatPostRecordingAction.startInterval,
+        isTransitioning: false,
+      ),
+    );
+    AppLogger.log(
+      '$logTag Session',
+      'event=stopped sessionId=${_state.sessionId} flowToken=${_state.flowToken}',
     );
   }
 
@@ -497,8 +551,22 @@ class RepeatFlowEngine {
   ///
   /// 评分是可选附加信息：关闭评分时仍应保留有效录音并继续训练流程，
   /// 只有没有可回放录音文件时才视为录音失败。
-  void onRecordingFinished(String? filePath, double? score) {
-    if (_state.phase is! Recording) return;
+  void onRecordingFinished(
+    String? filePath,
+    double? score, {
+    String? promptId,
+  }) {
+    final phase = _state.phase;
+    if (phase is! Recording) return;
+    if (promptId != null && promptId != phase.promptId) {
+      AppLogger.log(
+        '$logTag Flow',
+        'event=recording_ignored sessionId=${_state.sessionId} '
+            'reason=stale_prompt expectedPromptId=${phase.promptId} '
+            'actualPromptId=$promptId',
+      );
+      return;
+    }
 
     final hasRecording = filePath != null && filePath.isNotEmpty;
     AppLogger.log(
@@ -541,12 +609,18 @@ class RepeatFlowEngine {
       return;
     }
 
-    if (_userTookOverCurrentSentence) {
+    if (_state.postRecordingAction == RepeatPostRecordingAction.waitForUser) {
       AppLogger.log(logTag, '→ 用户已接管当前句，评估后保持等待');
       _updateState(
         _state.copyWith(
           phase: const WaitingForUser(WaitingReason.userInteraction),
         ),
+      );
+      AppLogger.log(
+        '$logTag Flow',
+        'event=recording_finished sessionId=${_state.sessionId} '
+            'flowToken=${_state.flowToken} sentenceIndex=${_state.sentenceIndex} '
+            'postRecordingAction=waitForUser',
       );
       return;
     }
@@ -554,9 +628,19 @@ class RepeatFlowEngine {
     _startInterval(resetFull: true);
   }
 
-  /// 录音取消/超时回调（由外部 Provider 的 ref.listen 桥接调用）
-  void onRecordingCancelled() {
-    if (_state.phase is! Recording) return;
+  /// 录音取消/超时回调（由外部 Provider 的 ref.listen 桥接调用）。
+  void onRecordingCancelled({String? promptId}) {
+    final phase = _state.phase;
+    if (phase is! Recording) return;
+    if (promptId != null && promptId != phase.promptId) {
+      AppLogger.log(
+        '$logTag Flow',
+        'event=recording_cancel_ignored sessionId=${_state.sessionId} '
+            'reason=stale_prompt expectedPromptId=${phase.promptId} '
+            'actualPromptId=$promptId',
+      );
+      return;
+    }
     AppLogger.log(logTag, '录音取消/超时 → WaitingForUser');
     _updateState(
       _state.copyWith(
@@ -571,6 +655,8 @@ class RepeatFlowEngine {
     _countdown.cancel();
     _playbackService.dispose();
     _sentences = [];
+    _navigationInFlight = false;
+    _state = _state.copyWith(flowToken: _state.flowToken + 1);
   }
 
   // ========== 内部方法 ==========
@@ -586,13 +672,22 @@ class RepeatFlowEngine {
     if (sentence == null) return;
 
     if (sentence.duration <= Duration.zero) {
-      unawaited(_advanceToNextRepeatOrSentence());
+      unawaited(
+        _advanceToNextRepeatOrSentence(
+          sessionId: _state.sessionId,
+          flowToken: _state.flowToken,
+        ),
+      );
       return;
     }
 
+    final sessionId = _state.sessionId;
+    final initialFlowToken = _state.flowToken;
     await _config.onBeforeSentenceStart?.call(_state.sentenceIndex);
+    if (!_isCurrentFlow(sessionId, initialFlowToken)) return;
 
     _updateState(_state.copyWith(phase: const PlayingPrompt()));
+    if (!_isCurrentFlow(sessionId, initialFlowToken)) return;
     final token = _state.flowToken;
     AppLogger.log(
       logTag,
@@ -618,7 +713,7 @@ class RepeatFlowEngine {
     if (result != SentencePlaybackResult.completed) {
       AppLogger.log(logTag, '播放未完成，跳过录音: result=$result token=$token');
       // 若不是用户操作已经切换了 phase，留在当前句等待重试，不能卡在播放态。
-      if (token == _state.flowToken && _state.phase is PlayingPrompt) {
+      if (_isCurrentFlow(sessionId, token) && _state.phase is PlayingPrompt) {
         _updateState(
           _state.copyWith(
             phase: const WaitingForUser(WaitingReason.recordingFailed),
@@ -627,16 +722,17 @@ class RepeatFlowEngine {
       }
       return;
     }
-    _onPromptFinished(token);
+    _onPromptFinished(sessionId, token);
   }
 
   /// 原句播放完成
-  void _onPromptFinished(int token) {
-    if (token != _state.flowToken) return;
+  void _onPromptFinished(int sessionId, int token) {
+    if (!_isCurrentFlow(sessionId, token)) return;
     if (_state.phase is! PlayingPrompt) return;
 
     AppLogger.log(logTag, '原句播放完成');
-    final sentence = currentSentence!;
+    final sentence = currentSentence;
+    if (sentence == null) return;
     _config.onSentencePlayed?.call(sentence);
 
     if (_waitAfterCurrentPrompt) {
@@ -714,6 +810,8 @@ class RepeatFlowEngine {
   /// 启动遍间倒计时
   Future<void> _startInterval({required bool resetFull}) async {
     final total = _state.intervalDuration;
+    final sessionId = _state.sessionId;
+    final flowToken = _state.flowToken;
     // 非重置时从 countdown controller 读取实际剩余时间
     final remaining = resetFull || !_countdown.isActive
         ? total
@@ -725,38 +823,78 @@ class RepeatFlowEngine {
       ),
     );
 
-    if (_config.isManualMode()) return;
+    AppLogger.log(
+      '$logTag Interval',
+      'event=start sessionId=$sessionId flowToken=$flowToken '
+          'sentenceIndex=${_state.sentenceIndex} '
+          'remainingMs=${remaining.inMilliseconds} totalMs=${total.inMilliseconds} '
+          'resetFull=$resetFull controlMode=${_state.controlMode.name}',
+    );
 
-    final token = _state.flowToken;
+    if (_config.isManualMode()) {
+      AppLogger.log(
+        '$logTag Interval',
+        'event=skipped sessionId=$sessionId flowToken=$flowToken reason=manual',
+      );
+      return;
+    }
+
     await _countdown.start(remaining);
 
-    if (token == _state.flowToken && _state.phase is WaitingInterval) {
-      _onIntervalFinished();
+    if (_isCurrentFlow(sessionId, flowToken) &&
+        _state.phase is WaitingInterval) {
+      AppLogger.log(
+        '$logTag Interval',
+        'event=complete sessionId=$sessionId flowToken=$flowToken '
+            'sentenceIndex=${_state.sentenceIndex}',
+      );
+      _onIntervalFinished(sessionId, flowToken);
+    } else {
+      AppLogger.log(
+        '$logTag Interval',
+        'event=cancelled sessionId=$sessionId flowToken=$flowToken '
+            'currentSessionId=${_state.sessionId} '
+            'currentFlowToken=${_state.flowToken} '
+            'currentPhase=${_state.phase.runtimeType}',
+      );
     }
   }
 
-  void _onIntervalFinished() {
+  void _onIntervalFinished(int sessionId, int flowToken) {
     if (_state.phase is! WaitingInterval) return;
-    unawaited(_advanceToNextRepeatOrSentence());
+    unawaited(
+      _advanceToNextRepeatOrSentence(
+        sessionId: sessionId,
+        flowToken: flowToken,
+      ),
+    );
   }
 
   /// 推进到下一遍或下一句
-  Future<void> _advanceToNextRepeatOrSentence() async {
+  Future<void> _advanceToNextRepeatOrSentence({
+    required int sessionId,
+    required int flowToken,
+  }) async {
+    if (!_isCurrentFlow(sessionId, flowToken)) return;
     if (_state.isLastRepeat) {
       if (_state.isLastSentence) {
         AppLogger.log(logTag, '全部完成');
         _updateState(_state.copyWith(phase: const SessionCompleted()));
       } else {
         AppLogger.log(logTag, '当前句完成 → 下一句');
-        await _jumpToSentence(_state.sentenceIndex + 1);
+        await _jumpToSentence(
+          _state.sentenceIndex + 1,
+          source: RepeatNavigationSource.automatic,
+        );
       }
     } else {
       final nextRepeat = _state.repeatIndex + 1;
-      final flowToken = _state.flowToken + 1;
-      _state = _state.copyWith(flowToken: flowToken);
+      final nextFlowToken = _state.flowToken + 1;
+      _state = _state.copyWith(flowToken: nextFlowToken);
       AppLogger.log(logTag, '下一遍: ${nextRepeat + 1}/${_state.totalRepeats}');
       await callbacks.clearRecording();
-      if (flowToken != _state.flowToken || _state.phase is! WaitingInterval) {
+      if (!_isCurrentFlow(sessionId, nextFlowToken) ||
+          _state.phase is! WaitingInterval) {
         return;
       }
       _updateState(
@@ -765,7 +903,7 @@ class RepeatFlowEngine {
           recordingPath: null,
           recordingScore: null,
           isReviewPlaybackActive: false,
-          flowToken: flowToken,
+          flowToken: nextFlowToken,
         ),
       );
       await _playCurrentSentence();
@@ -773,31 +911,87 @@ class RepeatFlowEngine {
   }
 
   /// 跳转到指定句子
-  Future<void> _jumpToSentence(int index) async {
+  Future<void> _jumpToSentence(
+    int index, {
+    required RepeatNavigationSource source,
+  }) async {
+    if (_navigationInFlight) {
+      AppLogger.log(
+        '$logTag Navigation',
+        'event=rejected requestId=${_navigationRequestSequence + 1} '
+            'source=${source.name} reason=in_flight '
+            'sessionId=${_state.sessionId} currentIndex=${_state.sentenceIndex}',
+      );
+      return;
+    }
+    final requestId = ++_navigationRequestSequence;
+    final sessionId = _state.sessionId;
+    _navigationInFlight = true;
+    _updateState(_state.copyWith(isTransitioning: true));
+    AppLogger.log(
+      '$logTag Navigation',
+      'event=request requestId=$requestId source=${source.name} '
+          'sessionId=${_state.sessionId} fromIndex=${_state.sentenceIndex} '
+          'targetIndex=$index flowToken=${_state.flowToken}',
+    );
     _waitAfterCurrentPrompt = false;
-    _userTookOverCurrentSentence = false;
     _atomicReset();
     final flowToken = _state.flowToken;
-    await callbacks.clearRecording();
-    if (flowToken != _state.flowToken) return;
+    try {
+      await callbacks.clearRecording();
+      if (!_isCurrentFlow(sessionId, flowToken)) {
+        AppLogger.log(
+          '$logTag Navigation',
+          'event=rejected requestId=$requestId source=${source.name} '
+              'reason=stale_after_cleanup sessionId=${_state.sessionId} '
+              'flowToken=$flowToken currentFlowToken=${_state.flowToken}',
+        );
+        return;
+      }
 
-    final sentence = _sentences[index];
-    _updateState(
-      _state.copyWith(
-        phase: const Idle(),
-        sentenceIndex: index,
-        repeatIndex: 0,
-        totalRepeats: _config.getRepeatCount(sentence),
-        intervalDuration: _config.getIntervalDuration(sentence),
-        recordingPath: null,
-        recordingScore: null,
-        isReviewPlaybackActive: false,
-        flowToken: flowToken,
-      ),
-    );
-
-    await _playCurrentSentence();
+      final sentence = _sentences[index];
+      _updateState(
+        _state.copyWith(
+          phase: const Idle(),
+          sentenceIndex: index,
+          repeatIndex: 0,
+          totalRepeats: _config.getRepeatCount(sentence),
+          intervalDuration: _config.getIntervalDuration(sentence),
+          recordingPath: null,
+          recordingScore: null,
+          isReviewPlaybackActive: false,
+          postRecordingAction: _defaultPostRecordingAction(),
+          flowToken: flowToken,
+        ),
+      );
+      AppLogger.log(
+        '$logTag Navigation',
+        'event=committed requestId=$requestId source=${source.name} '
+            'sessionId=${_state.sessionId} sentenceIndex=$index '
+            'flowToken=$flowToken',
+      );
+      _navigationInFlight = false;
+      _updateState(_state.copyWith(isTransitioning: false));
+      unawaited(_playCurrentSentence());
+    } finally {
+      if (_navigationInFlight &&
+          requestId == _navigationRequestSequence &&
+          sessionId == _state.sessionId) {
+        _navigationInFlight = false;
+        _updateState(_state.copyWith(isTransitioning: false));
+      }
+    }
   }
+
+  /// 返回当前会话和当前句默认使用的录音后续策略。
+  RepeatPostRecordingAction _defaultPostRecordingAction() =>
+      _config.isManualMode()
+      ? RepeatPostRecordingAction.waitForUser
+      : RepeatPostRecordingAction.startInterval;
+
+  /// 判断异步回调是否仍属于当前会话和当前流程代次。
+  bool _isCurrentFlow(int sessionId, int flowToken) =>
+      sessionId == _state.sessionId && flowToken == _state.flowToken;
 
   void _atomicReset() {
     _stopActiveResources();
