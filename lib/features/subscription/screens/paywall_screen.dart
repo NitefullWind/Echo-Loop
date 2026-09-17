@@ -37,8 +37,23 @@ import '../state/entitlement_state.dart';
 import '../utils/member_status.dart';
 import '../utils/plan_pricing.dart';
 
-/// 为 Paddle checkout 预填当前账号邮箱；结账页仍允许用户修改邮箱。
+final _paddleHostedCheckoutPathPattern = RegExp(
+  r'^/(?:checkout/)?hsc_[a-z\d_-]+$',
+  caseSensitive: false,
+);
+
+bool _isPaddleHostedCheckoutUri(Uri uri) {
+  final isPaddleHostedCheckoutHost =
+      uri.host == 'pay.paddle.io' || uri.host == 'sandbox-pay.paddle.io';
+  return isPaddleHostedCheckoutHost &&
+      _paddleHostedCheckoutPathPattern.hasMatch(uri.path);
+}
+
+/// 为旧版 Paddle payment link 预填当前账号邮箱；Hosted Checkout 不追加 fragment。
 Uri paddleCheckoutUriWithEmail(Uri checkoutUri, String? email) {
+  if (_isPaddleHostedCheckoutUri(checkoutUri)) {
+    return checkoutUri;
+  }
   final normalizedEmail = email?.trim();
   if (normalizedEmail == null || normalizedEmail.isEmpty) {
     return checkoutUri;

@@ -88,7 +88,10 @@ class _SpyController extends SubscriptionController {
       if (next != null) state = next;
       throw error;
     }
-    return Uri.parse('https://checkout.paddle.test/txn_1');
+    return Uri.parse(
+      'https://sandbox-pay.paddle.io/hsc_test'
+      '?transaction_id=txn_1&user_email=user%40example.com',
+    );
   }
 
   @override
@@ -314,20 +317,23 @@ void main() {
     debugManageSubscriptionsUrlOverride = null;
   });
 
-  test('Paddle checkout URL 预填邮箱且保留已有 fragment', () {
-    final uri = paddleCheckoutUriWithEmail(
-      Uri.parse('https://checkout.paddle.test/txn_1#source=app'),
+  test('Hosted Checkout 不追加邮箱 fragment，旧支付链接仍预填邮箱', () {
+    final hosted = paddleCheckoutUriWithEmail(
+      Uri.parse(
+        'https://sandbox-pay.paddle.io/hsc_test'
+        '?transaction_id=txn_1',
+      ),
       ' user@example.com ',
     );
+    expect(hosted.fragment, isEmpty);
 
-    expect(uri.toString(), contains('#source=app&email=user%40example.com'));
-    expect(
-      paddleCheckoutUriWithEmail(
-        Uri.parse('https://checkout.paddle.test/txn_1'),
-        '  ',
+    final legacy = paddleCheckoutUriWithEmail(
+      Uri.parse(
+        'https://sandbox-checkout.paddle.com/checkout/txn_1#source=app',
       ),
-      Uri.parse('https://checkout.paddle.test/txn_1'),
+      ' user@example.com ',
     );
+    expect(legacy.toString(), contains('#source=app&email=user%40example.com'));
   });
 
   testWidgets('平台未启用订阅：渲染占位页，不展示套餐与购买 CTA', (tester) async {
@@ -418,7 +424,11 @@ void main() {
 
     expect(spy.checkoutPlanId, 'plus_yearly_one_time');
     expect(spy.checkoutAllowStoreFallback, isFalse);
-    expect(urlLauncher.launched, ['https://checkout.paddle.test/txn_1']);
+    expect(urlLauncher.launched, [
+      'https://sandbox-pay.paddle.io/hsc_test'
+          '?transaction_id=txn_1&user_email=user%40example.com',
+    ]);
+    expect(Uri.parse(urlLauncher.launched.single).fragment, isEmpty);
 
     await tester.pump(const Duration(seconds: 121));
     await tester.pumpWidget(const SizedBox.shrink());
@@ -512,7 +522,10 @@ void main() {
     expect(spy.checkoutCalls, 1);
     expect(spy.checkoutPlanId, 'plus_yearly');
     expect(spy.checkoutAllowStoreFallback, isTrue);
-    expect(urlLauncher.launched, ['https://checkout.paddle.test/txn_1']);
+    expect(urlLauncher.launched, [
+      'https://sandbox-pay.paddle.io/hsc_test'
+          '?transaction_id=txn_1&user_email=user%40example.com',
+    ]);
 
     await tester.pump(const Duration(seconds: 121));
     await tester.pumpWidget(const SizedBox.shrink());
@@ -643,7 +656,10 @@ void main() {
 
     expect(spy.checkoutCalls, 1);
     expect(spy.checkoutPlanId, 'plus_yearly');
-    expect(urlLauncher.launched, ['https://checkout.paddle.test/txn_1']);
+    expect(urlLauncher.launched, [
+      'https://sandbox-pay.paddle.io/hsc_test'
+          '?transaction_id=txn_1&user_email=user%40example.com',
+    ]);
     expect(
       urlLauncher.options.single.mode,
       PreferredLaunchMode.externalApplication,
@@ -704,7 +720,10 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Subscribe'));
     await tester.pumpAndSettle();
 
-    expect(urlLauncher.launched, ['https://checkout.paddle.test/txn_1']);
+    expect(urlLauncher.launched, [
+      'https://sandbox-pay.paddle.io/hsc_test'
+          '?transaction_id=txn_1&user_email=user%40example.com',
+    ]);
     expect(
       find.text('Couldn\'t open the checkout page. Please try again.'),
       findsOneWidget,
