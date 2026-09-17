@@ -56,9 +56,9 @@ void main() {
       expect(config.transcriptionLimits.maxUploadBytes, 104857600);
     });
 
-    test('缺字段和未知版本回退本地默认，AI 聊天入口默认开启', () {
+    test('缺字段和未知版本回退本地默认，网盘导入和 AI 聊天入口默认开启', () {
       final missing = RemoteConfig.fromJson({'version': 1});
-      expect(missing.isEnabled(RemoteFeature.cloudDriveImport), isFalse);
+      expect(missing.isEnabled(RemoteFeature.cloudDriveImport), isTrue);
       expect(
         missing.isEnabled(RemoteFeature.showStoreWebCheckoutFallback),
         isFalse,
@@ -81,7 +81,7 @@ void main() {
           'cloudDriveImport': {'enabled': true},
         },
       });
-      expect(unknownVersion.isEnabled(RemoteFeature.cloudDriveImport), isFalse);
+      expect(unknownVersion.isEnabled(RemoteFeature.cloudDriveImport), isTrue);
       expect(unknownVersion.isEnabled(RemoteFeature.aiChatAssistant), isTrue);
     });
 
@@ -280,7 +280,7 @@ void main() {
         store: RemoteConfigStore(emptyPrefs),
         now: () => DateTime(2026, 7, 19, 14, 1),
       ).load();
-      expect(fallback.isEnabled(RemoteFeature.cloudDriveImport), isFalse);
+      expect(fallback.isEnabled(RemoteFeature.cloudDriveImport), isTrue);
     });
 
     test('fetchRemote 直接触网并覆盖未过期缓存', () async {
@@ -473,7 +473,16 @@ void main() {
       );
       final container = ProviderContainer(
         overrides: [
-          initialRemoteConfigProvider.overrideWithValue(RemoteConfig.defaults),
+          initialRemoteConfigProvider.overrideWithValue(
+            const RemoteConfig(
+              version: 1,
+              ttlSeconds: 120,
+              context: RemoteConfigContext(countryCode: 'US'),
+              features: RemoteConfigFeatures(
+                cloudDriveImport: RemoteFeatureConfig(enabled: false),
+              ),
+            ),
+          ),
           remoteConfigServiceProvider.overrideWithValue(service),
         ],
       );

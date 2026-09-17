@@ -57,7 +57,7 @@ class RemoteFeatureConfig {
 
 class RemoteConfigFeatures {
   const RemoteConfigFeatures({
-    this.cloudDriveImport = const RemoteFeatureConfig(enabled: false),
+    this.cloudDriveImport = const RemoteFeatureConfig(enabled: true),
     this.showStoreWebCheckoutFallback = const RemoteFeatureConfig(
       enabled: false,
     ),
