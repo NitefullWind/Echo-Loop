@@ -7,14 +7,14 @@ part of 'listen_and_repeat_controller.dart';
 // **************************************************************************
 
 String _$listenAndRepeatControllerHash() =>
-    r'33df4b49ccec5a4dc9812ee3229dff41ee58427b';
+    r'b690e3a14af77b63b297411a8c13cceccac41cba';
 
 /// 跟读会话控制器
 ///
 /// Copied from [ListenAndRepeatController].
 @ProviderFor(ListenAndRepeatController)
 final listenAndRepeatControllerProvider =
-    NotifierProvider<
+    AutoDisposeNotifierProvider<
       ListenAndRepeatController,
       ListenAndRepeatSessionState
     >.internal(
@@ -27,6 +27,7 @@ final listenAndRepeatControllerProvider =
       allTransitiveDependencies: null,
     );
 
-typedef _$ListenAndRepeatController = Notifier<ListenAndRepeatSessionState>;
+typedef _$ListenAndRepeatController =
+    AutoDisposeNotifier<ListenAndRepeatSessionState>;
 // ignore_for_file: type=lint
 // ignore_for_file: subtype_of_sealed_class, invalid_use_of_internal_member, invalid_use_of_visible_for_testing_member, deprecated_member_use_from_same_package

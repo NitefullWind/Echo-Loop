@@ -207,6 +207,7 @@ Widget _createTestWidget({
   bool listenAndRepeatRatingEnabled = true,
   MediaLearningStartup? mediaStartup,
 }) {
+  var usePassedController = true;
   final audioItemDao = _MockAudioItemDao();
   when(
     () => audioItemDao.getWordTimestamps(any()),
@@ -267,7 +268,17 @@ Widget _createTestWidget({
           ),
         ),
       ),
-      listenAndRepeatControllerProvider.overrideWith(() => controller),
+      listenAndRepeatControllerProvider.overrideWith(() {
+        if (usePassedController) {
+          usePassedController = false;
+          return controller;
+        }
+        return _TestListenAndRepeatController(
+          controller._initialState,
+          controller._sentences,
+          startPlayingNoop: true,
+        );
+      }),
       speechRecordingControllerProvider.overrideWith(
         () => _StaticSpeechRecordingController(recordingState),
       ),

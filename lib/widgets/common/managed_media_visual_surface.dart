@@ -20,6 +20,7 @@ class ManagedMediaVisualSurface extends StatefulWidget {
     required this.cancel,
     required this.child,
     this.onReady,
+    this.showVideoLoading = true,
   });
 
   /// 标识当前媒体准备任务；变化时取消旧任务并加载新媒体。
@@ -36,6 +37,9 @@ class ManagedMediaVisualSurface extends StatefulWidget {
 
   /// 当前 generation 首次 ready 后调用一次。
   final VoidCallback? onReady;
+
+  /// 是否展示视频加载文案；音频学习任务只需要通用加载状态。
+  final bool showVideoLoading;
 
   @override
   State<ManagedMediaVisualSurface> createState() =>
@@ -87,6 +91,10 @@ class _ManagedMediaVisualSurfaceState extends State<ManagedMediaVisualSurface> {
 
   Future<void> _runLoad(int generation) async {
     MediaLoadResult result;
+    AppLogger.log(
+      'ManagedMedia',
+      'event=startup_started generation=$generation loadKey=${widget.loadKey}',
+    );
     try {
       result = await widget.load();
     } catch (error, stackTrace) {
@@ -100,11 +108,23 @@ class _ManagedMediaVisualSurfaceState extends State<ManagedMediaVisualSurface> {
 
     switch (result) {
       case MediaLoadResult.ready:
+        AppLogger.log(
+          'ManagedMedia',
+          'event=startup_ready generation=$generation loadKey=${widget.loadKey}',
+        );
         setState(() => _phase = _ManagedMediaPhase.ready);
         widget.onReady?.call();
       case MediaLoadResult.failure:
+        AppLogger.log(
+          'ManagedMedia',
+          'event=startup_failed generation=$generation loadKey=${widget.loadKey}',
+        );
         setState(() => _phase = _ManagedMediaPhase.failure);
       case MediaLoadResult.cancelled:
+        AppLogger.log(
+          'ManagedMedia',
+          'event=startup_cancelled generation=$generation loadKey=${widget.loadKey}',
+        );
         setState(() => _phase = _ManagedMediaPhase.cancelled);
     }
   }
@@ -114,15 +134,18 @@ class _ManagedMediaVisualSurfaceState extends State<ManagedMediaVisualSurface> {
     final disableAnimations =
         MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     final overlay = switch (_phase) {
-      _ManagedMediaPhase.loading => const _MediaLoadingOverlay(
+      _ManagedMediaPhase.loading => _MediaLoadingOverlay(
         key: ValueKey('managed-media-loading'),
+        showVideoLoading: widget.showVideoLoading,
       ),
       _ManagedMediaPhase.failure => _MediaFailureOverlay(
         key: const ValueKey('managed-media-failure'),
         onRetry: _startLoad,
+        showVideoLoading: widget.showVideoLoading,
       ),
-      _ManagedMediaPhase.cancelled => const _MediaLoadingOverlay(
+      _ManagedMediaPhase.cancelled => _MediaLoadingOverlay(
         key: ValueKey('managed-media-cancelled'),
+        showVideoLoading: widget.showVideoLoading,
       ),
       _ManagedMediaPhase.ready => const SizedBox.shrink(
         key: ValueKey('managed-media-ready'),
@@ -150,7 +173,9 @@ class _ManagedMediaVisualSurfaceState extends State<ManagedMediaVisualSurface> {
 }
 
 class _MediaLoadingOverlay extends StatelessWidget {
-  const _MediaLoadingOverlay({super.key});
+  const _MediaLoadingOverlay({super.key, required this.showVideoLoading});
+
+  final bool showVideoLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -160,18 +185,19 @@ class _MediaLoadingOverlay extends StatelessWidget {
     return MediaQuery.withNoTextScaling(
       child: _MediaOverlayFrame(
         child: Semantics(
-          label: l10n.videoLoading,
+          label: showVideoLoading ? l10n.videoLoading : null,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               const CircularProgressIndicator(color: Colors.white),
               const SizedBox(height: 12),
-              Text(
-                l10n.videoLoading,
-                style: const TextStyle(color: Colors.white),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+              if (showVideoLoading)
+                Text(
+                  l10n.videoLoading,
+                  style: const TextStyle(color: Colors.white),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
             ],
           ),
         ),
@@ -181,9 +207,14 @@ class _MediaLoadingOverlay extends StatelessWidget {
 }
 
 class _MediaFailureOverlay extends StatelessWidget {
-  const _MediaFailureOverlay({super.key, required this.onRetry});
+  const _MediaFailureOverlay({
+    super.key,
+    required this.onRetry,
+    required this.showVideoLoading,
+  });
 
   final VoidCallback onRetry;
+  final bool showVideoLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -194,11 +225,12 @@ class _MediaFailureOverlay extends StatelessWidget {
         children: [
           const Icon(Icons.error_outline, size: 40, color: Colors.white),
           const SizedBox(height: 12),
-          Text(
-            l10n.videoLoadFailed,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white),
-          ),
+          if (showVideoLoading)
+            Text(
+              l10n.videoLoadFailed,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white),
+            ),
           const SizedBox(height: 16),
           FilledButton(onPressed: onRetry, child: Text(l10n.videoRetry)),
         ],

@@ -23,6 +23,14 @@ import 'package:echo_loop/providers/speech/speech_recording_controller.dart';
 
 import '../helpers/mock_providers.dart';
 
+void _listenToReviewDifficultPractice(ProviderContainer container) {
+  container.listen<ReviewDifficultPracticeState>(
+    reviewDifficultPracticeProvider,
+    (_, __) {},
+    fireImmediately: true,
+  );
+}
+
 class _ReplayTestAudioEngine extends TestForegroundAudioEngine {
   int _sessionId = 0;
 
@@ -327,6 +335,7 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
+      _listenToReviewDifficultPractice(container);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
       await notifier.initialize(
@@ -391,6 +400,7 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
+      _listenToReviewDifficultPractice(container);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
       await notifier.initialize(
@@ -451,6 +461,7 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
+      _listenToReviewDifficultPractice(container);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
       await notifier.initialize(
@@ -511,6 +522,7 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
+      _listenToReviewDifficultPractice(container);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
       await notifier.initialize(
@@ -572,6 +584,7 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
+      _listenToReviewDifficultPractice(container);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
       await notifier.initialize([
@@ -623,6 +636,7 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
+      _listenToReviewDifficultPractice(container);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
       await notifier.initialize([
@@ -681,6 +695,7 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
+      _listenToReviewDifficultPractice(container);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
       await notifier.initialize([
@@ -739,6 +754,7 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
+      _listenToReviewDifficultPractice(container);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
       await notifier.initialize([
@@ -791,6 +807,7 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
+      _listenToReviewDifficultPractice(container);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
       final sentences = [
@@ -857,6 +874,7 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
+      _listenToReviewDifficultPractice(container);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
       await notifier.initialize([
@@ -918,6 +936,7 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
+      _listenToReviewDifficultPractice(container);
 
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
       await notifier.initialize([
@@ -993,6 +1012,7 @@ void main() {
     test('跳转到合法句子更新 currentSentenceIndex', () async {
       final container = buildContainer();
       addTearDown(container.dispose);
+      _listenToReviewDifficultPractice(container);
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
       await notifier.initialize(buildSentences(8));
 
@@ -1007,6 +1027,7 @@ void main() {
     test('越界索引被 clamp 到合法范围', () async {
       final container = buildContainer();
       addTearDown(container.dispose);
+      _listenToReviewDifficultPractice(container);
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
       await notifier.initialize(buildSentences(5));
 
@@ -1026,6 +1047,7 @@ void main() {
     test('跳到当前句保持不变（no-op）', () async {
       final container = buildContainer();
       addTearDown(container.dispose);
+      _listenToReviewDifficultPractice(container);
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
       await notifier.initialize(buildSentences(5));
       await notifier.goToSentence(2);
@@ -1043,6 +1065,7 @@ void main() {
       addTearDown(playback.dispose);
       final container = buildContainer();
       addTearDown(container.dispose);
+      _listenToReviewDifficultPractice(container);
       final notifier = container.read(reviewDifficultPracticeProvider.notifier);
       await notifier.initialize(
         buildSentences(3),

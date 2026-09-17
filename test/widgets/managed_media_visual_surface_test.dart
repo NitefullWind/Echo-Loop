@@ -13,6 +13,7 @@ void main() {
     required Future<MediaLoadResult> Function() load,
     required Future<void> Function() cancel,
     VoidCallback? onReady,
+    bool showVideoLoading = true,
   }) {
     return createTestApp(
       Scaffold(
@@ -21,6 +22,7 @@ void main() {
           load: load,
           cancel: cancel,
           onReady: onReady,
+          showVideoLoading: showVideoLoading,
           child: const ColoredBox(
             key: ValueKey('ready-child'),
             color: Colors.green,
@@ -93,6 +95,26 @@ void main() {
     expect(find.byKey(const ValueKey('ready-child')), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(readyCalls, 1);
+  });
+
+  testWidgets('音频启动复用托管组件时不显示视频加载文案', (tester) async {
+    final completer = Completer<MediaLoadResult>();
+    await tester.pumpWidget(
+      buildSubject(
+        loadKey: 'audio-1',
+        load: () => completer.future,
+        cancel: () async {},
+        showVideoLoading: false,
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('Loading video…'), findsNothing);
+
+    completer.complete(MediaLoadResult.ready);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('ready-child')), findsOneWidget);
   });
 
   testWidgets('极大系统字号下加载提示保持在视频画布内', (tester) async {

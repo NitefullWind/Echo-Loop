@@ -9,6 +9,7 @@ class MediaLearningStartup {
     required this.loadKey,
     required this.load,
     required this.cancel,
+    this.showVideoLoading = true,
   });
 
   /// 标识本次加载任务；变化时托管组件会取消旧任务并启动新任务。
@@ -19,4 +20,7 @@ class MediaLearningStartup {
 
   /// 取消尚未完成的进入任务，或退出已经准备完成的媒体会话。
   final Future<void> Function() cancel;
+
+  /// 是否展示视频加载文案；音频练习复用该延迟启动协议时关闭。
+  final bool showVideoLoading;
 }

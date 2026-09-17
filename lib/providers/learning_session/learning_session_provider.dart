@@ -209,6 +209,7 @@ class LearningSession extends _$LearningSession {
 
   /// 视频难句补练进入流程 generation；取消、重试或退出会使旧结果失效。
   int _mediaReviewDifficultEntryGeneration = 0;
+  int _reviewDifficultEntryGeneration = 0;
 
   @override
   LearningSessionState build() {
@@ -983,6 +984,8 @@ class LearningSession extends _$LearningSession {
     DifficultPracticeSettings settings = const DifficultPracticeSettings(),
     LearningStage? stage,
   }) async {
+    final generation = ++_reviewDifficultEntryGeneration;
+    bool isCurrentGeneration() => generation == _reviewDifficultEntryGeneration;
     final practice = ref.read(listeningPracticeProvider.notifier);
     final currentSettings = ref.read(listeningPracticeProvider).settings;
 
@@ -991,6 +994,7 @@ class LearningSession extends _$LearningSession {
     final bookmarkedIndices = await bookmarkDao.getBookmarkedIndices(
       audioItemId,
     );
+    if (!isCurrentGeneration()) return;
 
     // 过滤出难句列表
     final difficultSentences = allSentences
@@ -1001,6 +1005,7 @@ class LearningSession extends _$LearningSession {
     final progress = await ref
         .read(learningProgressNotifierProvider.notifier)
         .getLatestOrEnsureProgress(audioItemId);
+    if (!isCurrentGeneration()) return;
     int startIndex = 0;
     if (isFreePlay && _isBreakpointValid(progress.freePlayBreakpointSavedAt)) {
       startIndex = progress.freePlayDifficultPracticeSentenceIndex ?? 0;
@@ -1023,6 +1028,7 @@ class LearningSession extends _$LearningSession {
     // 录音类任务（难句补练）用前台引擎、不上锁屏：先停媒体引擎清残留卡片，再加载到前台引擎。
     await ref.read(audioEngineProvider.notifier).stop();
     await _ensureAudioLoaded(audioItemId, foreground: true);
+    if (!isCurrentGeneration()) return;
 
     _logEnterMode(
       'enterReviewDifficultPracticeMode',
@@ -1045,7 +1051,20 @@ class LearningSession extends _$LearningSession {
         stage,
       ),
     );
+    if (!isCurrentGeneration()) {
+      await player.disposePlayer();
+      return;
+    }
     _trackSessionStart();
+  }
+
+  /// 取消音频难句补练进入流程，并清理已经建立的部分会话。
+  Future<void> cancelReviewDifficultPracticeEntry() async {
+    ++_reviewDifficultEntryGeneration;
+    AppLogger.log('Session', 'event=review_difficult_startup_cancelled');
+    if (state.learningMode == LearningMode.reviewDifficultPractice) {
+      await exitLearningMode();
+    }
   }
 
   /// 进入视频难句补练：媒体只负责原句区间播放，练习流程与音频共用。
@@ -1196,6 +1215,9 @@ class LearningSession extends _$LearningSession {
     }
     if (mode == LearningMode.reviewDifficultPractice && usesMediaChain) {
       _mediaReviewDifficultEntryGeneration += 1;
+    }
+    if (mode == LearningMode.reviewDifficultPractice) {
+      _reviewDifficultEntryGeneration += 1;
     }
     if (mode == LearningMode.blindListen) {
       await blindPlayer?.disposePlayer();

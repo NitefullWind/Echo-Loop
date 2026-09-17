@@ -228,6 +228,14 @@ void main() {
   late AppDatabase database;
   late _RecordingStudyTimeService studyTimeService;
 
+  void listenToController(ProviderContainer value) {
+    value.listen<ListenAndRepeatSessionState>(
+      listenAndRepeatControllerProvider,
+      (_, __) {},
+      fireImmediately: true,
+    );
+  }
+
   setUp(() {
     database = AppDatabase(NativeDatabase.memory());
     studyTimeService = _RecordingStudyTimeService();
@@ -242,6 +250,7 @@ void main() {
         ),
       ],
     );
+    listenToController(container);
     controller = container.read(listenAndRepeatControllerProvider.notifier);
   });
 
@@ -270,7 +279,7 @@ void main() {
       when(
         () => bookmarkDao.getBookmarkedIndices('video-1'),
       ).thenAnswer((_) async => {0});
-      return ProviderContainer(
+      final container = ProviderContainer(
         overrides: [
           foregroundAudioEngineProvider.overrideWith(
             () => _InstantAudioEngine(),
@@ -296,6 +305,8 @@ void main() {
           analyticsOverride(),
         ],
       );
+      listenToController(container);
+      return container;
     }
 
     test('加载失败会释放媒体且不会准备跟读会话', () async {
@@ -455,6 +466,7 @@ void main() {
           ),
         ],
       );
+      listenToController(container);
       controller = container.read(listenAndRepeatControllerProvider.notifier);
       await controller.prepareSession(
         sentences: createTestSentences(count: 1),
@@ -496,6 +508,7 @@ void main() {
         ],
       );
       addTearDown(statsContainer.dispose);
+      listenToController(statsContainer);
       final statsController = statsContainer.read(
         listenAndRepeatControllerProvider.notifier,
       );
@@ -632,6 +645,7 @@ void main() {
           ),
         ],
       );
+      listenToController(container);
       controller = container.read(listenAndRepeatControllerProvider.notifier);
 
       await controller.prepareSession(
@@ -667,6 +681,7 @@ void main() {
           ),
         ],
       );
+      listenToController(container);
       controller = container.read(listenAndRepeatControllerProvider.notifier);
 
       await controller.prepareSession(
@@ -794,6 +809,7 @@ void main() {
         ],
       );
       addTearDown(initializedContainer.dispose);
+      listenToController(initializedContainer);
 
       final initializedController = initializedContainer.read(
         listenAndRepeatControllerProvider.notifier,
@@ -842,6 +858,7 @@ void main() {
         ],
       );
       addTearDown(fullTextContainer.dispose);
+      listenToController(fullTextContainer);
 
       await fullTextContainer
           .read(listenAndRepeatControllerProvider.notifier)
@@ -901,6 +918,7 @@ void main() {
         ],
       );
       addTearDown(controlledContainer.dispose);
+      listenToController(controlledContainer);
 
       final controlledController = controlledContainer.read(
         listenAndRepeatControllerProvider.notifier,

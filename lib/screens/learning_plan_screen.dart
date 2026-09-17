@@ -30,6 +30,7 @@ import '../providers/blind_listen_prefs_provider.dart';
 import '../providers/retell_prefs_provider.dart';
 import '../providers/difficult_practice_prefs_provider.dart';
 import '../providers/listen_and_repeat/listen_and_repeat_controller.dart';
+import '../providers/learning_session/review_difficult_practice_provider.dart';
 import '../providers/listening_practice/listening_practice_provider.dart';
 import '../providers/new_user_guide_provider.dart';
 import '../providers/settings_provider.dart';
@@ -1071,7 +1072,6 @@ class _LearningPlanScreenState extends ConsumerState<LearningPlanScreen> {
       return;
     }
 
-    final session = ref.read(learningSessionProvider.notifier);
     final route = AppRoutes.reviewDifficultPractice(
       widget.collectionId,
       widget.audioItemId,
@@ -1082,25 +1082,46 @@ class _LearningPlanScreenState extends ConsumerState<LearningPlanScreen> {
         extra: MediaLearningStartup(
           loadKey:
               '${audioItem.id}:review-difficult:${stage?.key ?? 'current'}:planned',
-          load: () => session.enterMediaReviewDifficultPracticeMode(
-            audioItem,
-            sentences,
-            settings: settings,
-            stage: stage,
-          ),
-          cancel: session.cancelMediaReviewDifficultPracticeEntry,
+          load: () => ref
+              .read(learningSessionProvider.notifier)
+              .enterMediaReviewDifficultPracticeMode(
+                audioItem,
+                sentences,
+                settings: settings,
+                stage: stage,
+              ),
+          cancel: () => ref
+              .read(learningSessionProvider.notifier)
+              .cancelMediaReviewDifficultPracticeEntry(),
         ),
       );
       return;
     }
 
-    await session.enterReviewDifficultPracticeMode(
-      widget.audioItemId,
-      sentences,
-      settings: settings,
-      stage: stage,
+    context.push(
+      route,
+      extra: MediaLearningStartup(
+        loadKey:
+            '${widget.audioItemId}:review-difficult:${stage?.key ?? 'current'}:planned',
+        showVideoLoading: false,
+        load: () async {
+          await ref
+              .read(learningSessionProvider.notifier)
+              .enterReviewDifficultPracticeMode(
+                widget.audioItemId,
+                sentences,
+                settings: settings,
+                stage: stage,
+              );
+          return ref.read(reviewDifficultPracticeProvider).totalSentences > 0
+              ? MediaLoadResult.ready
+              : MediaLoadResult.cancelled;
+        },
+        cancel: () => ref
+            .read(learningSessionProvider.notifier)
+            .cancelReviewDifficultPracticeEntry(),
+      ),
     );
-    if (context.mounted) context.push(route);
   }
 
   /// 自动完成难句补练后，按新的 `currentSubStage` 自动进入下一个子步骤。
@@ -1533,7 +1554,6 @@ class _LearningPlanScreenState extends ConsumerState<LearningPlanScreen> {
           );
           return;
         }
-        final controller = ref.read(listenAndRepeatControllerProvider.notifier);
         if (audioItem.isVideo) {
           if (!context.mounted) return;
           context.push(
@@ -1543,34 +1563,50 @@ class _LearningPlanScreenState extends ConsumerState<LearningPlanScreen> {
             ),
             extra: MediaLearningStartup(
               loadKey: '${audioItem.id}:listen-and-repeat:planned',
-              load: () => controller.initializeMedia(
-                mediaItem: audioItem,
+              load: () => ref
+                  .read(listenAndRepeatControllerProvider.notifier)
+                  .initializeMedia(
+                    mediaItem: audioItem,
+                    allSentences: sentences,
+                    isFreePlay: false,
+                    scope: scope,
+                    smartSpeed: smartSpeed,
+                    stage: stage,
+                  ),
+              cancel: () => ref
+                  .read(listenAndRepeatControllerProvider.notifier)
+                  .cancelMediaEntry(),
+            ),
+          );
+          return;
+        }
+        context.push(
+          AppRoutes.listenAndRepeatPlayer(
+            widget.collectionId,
+            widget.audioItemId,
+          ),
+          extra: MediaLearningStartup(
+            loadKey: '${audioItem.id}:listen-and-repeat:planned',
+            showVideoLoading: false,
+            load: () async {
+              final controller = ref.read(
+                listenAndRepeatControllerProvider.notifier,
+              );
+              await controller.initialize(
+                audioItemId: widget.audioItemId,
                 allSentences: sentences,
                 isFreePlay: false,
                 scope: scope,
                 smartSpeed: smartSpeed,
                 stage: stage,
-              ),
-              cancel: controller.cancelMediaEntry,
-            ),
-          );
-          return;
-        }
-        await ref
-            .read(listenAndRepeatControllerProvider.notifier)
-            .initialize(
-              audioItemId: widget.audioItemId,
-              allSentences: sentences,
-              isFreePlay: false,
-              scope: scope,
-              smartSpeed: smartSpeed,
-              stage: stage,
-            );
-        if (!context.mounted) return;
-        context.push(
-          AppRoutes.listenAndRepeatPlayer(
-            widget.collectionId,
-            widget.audioItemId,
+              );
+              return controller.isSessionPrepared
+                  ? MediaLoadResult.ready
+                  : MediaLoadResult.cancelled;
+            },
+            cancel: () => ref
+                .read(listenAndRepeatControllerProvider.notifier)
+                .cancelEntry(),
           ),
         );
       },
@@ -2964,7 +3000,6 @@ class _FirstStudySection extends ConsumerWidget {
           );
           return;
         }
-        final controller = ref.read(listenAndRepeatControllerProvider.notifier);
         if (audioItem.isVideo) {
           if (!context.mounted) return;
           context.push(
@@ -2972,13 +3007,15 @@ class _FirstStudySection extends ConsumerWidget {
             extra: MediaLearningStartup(
               loadKey: '${audioItem.id}:listen-and-repeat:free-play',
               load: () async {
-                final result = await controller.initializeMedia(
-                  mediaItem: audioItem,
-                  allSentences: sentences,
-                  isFreePlay: true,
-                  scope: scope,
-                  smartSpeed: smartSpeed,
-                );
+                final result = await ref
+                    .read(listenAndRepeatControllerProvider.notifier)
+                    .initializeMedia(
+                      mediaItem: audioItem,
+                      allSentences: sentences,
+                      isFreePlay: true,
+                      scope: scope,
+                      smartSpeed: smartSpeed,
+                    );
                 if (result == MediaLoadResult.ready) {
                   ref
                       .read(learningSessionProvider.notifier)
@@ -2989,29 +3026,45 @@ class _FirstStudySection extends ConsumerWidget {
                 }
                 return result;
               },
-              cancel: controller.cancelMediaEntry,
+              cancel: () => ref
+                  .read(listenAndRepeatControllerProvider.notifier)
+                  .cancelMediaEntry(),
             ),
           );
           return;
         }
-        await ref
-            .read(listenAndRepeatControllerProvider.notifier)
-            .initialize(
-              audioItemId: audioItemId,
-              allSentences: sentences,
-              isFreePlay: true,
-              scope: scope,
-              smartSpeed: smartSpeed,
-            );
-        // 补做语义：跳过的难句跟读完成后回收为已完成
-        ref
-            .read(learningSessionProvider.notifier)
-            .setCatchUp(LearningStage.firstLearn, SubStageType.listenAndRepeat);
-        if (context.mounted) {
-          context.push(
-            AppRoutes.listenAndRepeatPlayer(collectionId, audioItemId),
-          );
-        }
+        context.push(
+          AppRoutes.listenAndRepeatPlayer(collectionId, audioItemId),
+          extra: MediaLearningStartup(
+            loadKey: '${audioItem.id}:listen-and-repeat:free-play',
+            showVideoLoading: false,
+            load: () async {
+              final controller = ref.read(
+                listenAndRepeatControllerProvider.notifier,
+              );
+              await controller.initialize(
+                audioItemId: audioItemId,
+                allSentences: sentences,
+                isFreePlay: true,
+                scope: scope,
+                smartSpeed: smartSpeed,
+              );
+              if (!controller.isSessionPrepared) {
+                return MediaLoadResult.cancelled;
+              }
+              ref
+                  .read(learningSessionProvider.notifier)
+                  .setCatchUp(
+                    LearningStage.firstLearn,
+                    SubStageType.listenAndRepeat,
+                  );
+              return MediaLoadResult.ready;
+            },
+            cancel: () => ref
+                .read(listenAndRepeatControllerProvider.notifier)
+                .cancelEntry(),
+          ),
+        );
       },
     );
   }
@@ -3742,7 +3795,6 @@ class _ReviewRoundSection extends ConsumerWidget {
         final settings = ref
             .read(difficultPracticePrefsProvider.notifier)
             .resolve(slot, smartSpeed: smartSpeed);
-        final notifier = ref.read(learningSessionProvider.notifier);
         if (audioItem.isVideo) {
           if (!context.mounted) return;
           context.push(
@@ -3751,7 +3803,8 @@ class _ReviewRoundSection extends ConsumerWidget {
               loadKey:
                   '${audioItem.id}:review-difficult:${review.stage.key}:free-play',
               load: () async {
-                final result = await notifier
+                final result = await ref
+                    .read(learningSessionProvider.notifier)
                     .enterMediaReviewDifficultPracticeMode(
                       audioItem,
                       sentences,
@@ -3760,32 +3813,55 @@ class _ReviewRoundSection extends ConsumerWidget {
                       stage: review.stage,
                     );
                 if (result == MediaLoadResult.ready) {
-                  notifier.setCatchUp(
-                    review.stage,
-                    SubStageType.reviewDifficultPractice,
-                  );
+                  ref
+                      .read(learningSessionProvider.notifier)
+                      .setCatchUp(
+                        review.stage,
+                        SubStageType.reviewDifficultPractice,
+                      );
                 }
                 return result;
               },
-              cancel: notifier.cancelMediaReviewDifficultPracticeEntry,
+              cancel: () => ref
+                  .read(learningSessionProvider.notifier)
+                  .cancelMediaReviewDifficultPracticeEntry(),
             ),
           );
           return;
         }
-        await notifier.enterReviewDifficultPracticeMode(
-          audioItemId,
-          sentences,
-          isFreePlay: true,
-          settings: settings,
-          stage: review.stage,
+        context.push(
+          AppRoutes.reviewDifficultPractice(collectionId, audioItemId),
+          extra: MediaLearningStartup(
+            loadKey:
+                '${audioItem.id}:review-difficult:${review.stage.key}:free-play',
+            showVideoLoading: false,
+            load: () async {
+              await ref
+                  .read(learningSessionProvider.notifier)
+                  .enterReviewDifficultPracticeMode(
+                    audioItemId,
+                    sentences,
+                    isFreePlay: true,
+                    settings: settings,
+                    stage: review.stage,
+                  );
+              final player = ref.read(reviewDifficultPracticeProvider);
+              if (player.totalSentences == 0) {
+                return MediaLoadResult.cancelled;
+              }
+              ref
+                  .read(learningSessionProvider.notifier)
+                  .setCatchUp(
+                    review.stage,
+                    SubStageType.reviewDifficultPractice,
+                  );
+              return MediaLoadResult.ready;
+            },
+            cancel: () => ref
+                .read(learningSessionProvider.notifier)
+                .cancelReviewDifficultPracticeEntry(),
+          ),
         );
-        // 补做语义：跳过的复习难句补练完成后回收为已完成
-        notifier.setCatchUp(review.stage, SubStageType.reviewDifficultPractice);
-        if (context.mounted) {
-          context.push(
-            AppRoutes.reviewDifficultPractice(collectionId, audioItemId),
-          );
-        }
       },
     );
   }

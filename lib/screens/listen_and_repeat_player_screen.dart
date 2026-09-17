@@ -169,6 +169,7 @@ class _ListenAndRepeatPlayerScreenState
       loadKey: startup.loadKey,
       load: startup.load,
       cancel: startup.cancel,
+      showVideoLoading: startup.showVideoLoading,
       onReady: _handleMediaStartupReady,
       child: child,
     );

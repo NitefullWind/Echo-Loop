@@ -551,13 +551,20 @@ class RepeatFlowEngine {
   ///
   /// 评分是可选附加信息：关闭评分时仍应保留有效录音并继续训练流程，
   /// 只有没有可回放录音文件时才视为录音失败。
-  void onRecordingFinished(
+  bool onRecordingFinished(
     String? filePath,
     double? score, {
     String? promptId,
   }) {
     final phase = _state.phase;
-    if (phase is! Recording) return;
+    if (phase is! Recording) {
+      AppLogger.log(
+        '$logTag Flow',
+        'event=recording_ignored sessionId=${_state.sessionId} '
+            'reason=not_recording actualPromptId=$promptId',
+      );
+      return false;
+    }
     if (promptId != null && promptId != phase.promptId) {
       AppLogger.log(
         '$logTag Flow',
@@ -565,7 +572,7 @@ class RepeatFlowEngine {
             'reason=stale_prompt expectedPromptId=${phase.promptId} '
             'actualPromptId=$promptId',
       );
-      return;
+      return false;
     }
 
     final hasRecording = filePath != null && filePath.isNotEmpty;
@@ -596,7 +603,7 @@ class RepeatFlowEngine {
         ),
       );
       unawaited(Future<void>.sync(callbacks.clearRecording));
-      return;
+      return true;
     }
 
     if (_config.isManualMode()) {
@@ -606,7 +613,7 @@ class RepeatFlowEngine {
           phase: const WaitingForUser(WaitingReason.userInteraction),
         ),
       );
-      return;
+      return true;
     }
 
     if (_state.postRecordingAction == RepeatPostRecordingAction.waitForUser) {
@@ -622,10 +629,11 @@ class RepeatFlowEngine {
             'flowToken=${_state.flowToken} sentenceIndex=${_state.sentenceIndex} '
             'postRecordingAction=waitForUser',
       );
-      return;
+      return true;
     }
 
     _startInterval(resetFull: true);
+    return true;
   }
 
   /// 录音取消/超时回调（由外部 Provider 的 ref.listen 桥接调用）。

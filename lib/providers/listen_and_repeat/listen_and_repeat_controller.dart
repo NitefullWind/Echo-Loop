@@ -53,7 +53,7 @@ import 'listen_and_repeat_settings_provider.dart';
 part 'listen_and_repeat_controller.g.dart';
 
 /// 跟读会话控制器
-@Riverpod(keepAlive: true)
+@riverpod
 class ListenAndRepeatController extends _$ListenAndRepeatController {
   /// 跟读流程引擎
   late final RepeatFlowEngine _engine;
@@ -79,6 +79,7 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
   String? _studyAudioItemId;
   bool _manageForegroundAudioEngine = true;
   int _studySessionGeneration = 0;
+  int _entryGeneration = 0;
 
   @override
   ListenAndRepeatSessionState build() {
@@ -192,7 +193,10 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
     SentencePlaybackDriver? playbackDriver,
     bool usesMediaEngine = false,
   }) async {
+    final entryGeneration = ++_entryGeneration;
+    bool isCurrentEntry() => entryGeneration == _entryGeneration;
     await _disposeStudySessionTimer();
+    if (!isCurrentEntry()) return;
     _studySessionGeneration += 1;
     _studyAudioItemId = audioItemId;
     _manageForegroundAudioEngine = !usesMediaEngine;
@@ -209,12 +213,14 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
     // 录音类任务用前台引擎播放原句、不上锁屏。进任务停掉媒体引擎，清除上一个媒体任务
     // （精听/盲听/Free Player）残留的锁屏/通知栏卡片（非idle→idle → stopService）。
     await ref.read(audioEngineProvider.notifier).stop();
+    if (!isCurrentEntry()) return;
 
     // 从 DB 读难句索引
     final bookmarkDao = ref.read(bookmarkDaoProvider);
     final bookmarkedIndices = await bookmarkDao.getBookmarkedIndices(
       audioItemId,
     );
+    if (!isCurrentEntry()) return;
     // 难句列表来自数据库索引，而 [allSentences] 只承载字幕正文；进入跟读会话前
     // 必须同步收藏态，否则首句会被误判为“未收藏”，点击后还会走新增分支。
     final sessionSentences = BookmarkManager.createSentenceBookmarkSnapshot(
@@ -233,6 +239,7 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
     final progress = await ref
         .read(learningProgressNotifierProvider.notifier)
         .getLatestOrEnsureProgress(audioItemId);
+    if (!isCurrentEntry()) return;
     int startIndex = 0;
     if (isFreePlay) {
       startIndex = progress.freePlayShadowingSentenceIndex ?? 0;
@@ -267,6 +274,7 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
     ref.read(listeningPracticeProvider.notifier).suspendListeners();
     if (_manageForegroundAudioEngine) {
       await _ensureForegroundAudioLoaded(audioItemId);
+      if (!isCurrentEntry()) return;
     }
 
     final studySessionGeneration = _studySessionGeneration;
@@ -440,6 +448,7 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
 
   /// 取消正在进入的视频跟读；迟到结果由 generation guard 丢弃。
   Future<void> cancelMediaEntry() async {
+    ++_entryGeneration;
     final generation = ++_mediaEntryGeneration;
     AppLogger.log(
       'L&R MediaEntry',
@@ -453,6 +462,16 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
       if (mediaEngine != null && mediaGeneration != null) {
         await _releaseOwnedMediaEngine(mediaEngine, mediaGeneration);
       }
+    }
+  }
+
+  /// 取消音频或视频跟读进入流程；迟到的初始化结果不得重新建立会话。
+  Future<void> cancelEntry() async {
+    ++_entryGeneration;
+    ++_mediaEntryGeneration;
+    AppLogger.log('L&R Session', 'event=startup_cancelled');
+    if (_sessionPrepared || _studyAudioItemId != null) {
+      await exitLearningMode();
     }
   }
 
@@ -783,6 +802,7 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
           'timerReady=${timer != null}',
     );
 
+    _entryGeneration += 1;
     _studySessionGeneration += 1;
     _mediaEntryGeneration += 1;
 
@@ -1075,11 +1095,20 @@ class ListenAndRepeatController extends _$ListenAndRepeatController {
         next.phase == SpeechRecordingPhase.idle &&
         next.currentAttempt != null) {
       final attempt = next.currentAttempt!;
-      _engine.onRecordingFinished(
+      final accepted = _engine.onRecordingFinished(
         attempt.filePath,
         attempt.score,
         promptId: attempt.promptId,
       );
+      if (!accepted) {
+        AppLogger.log(
+          'L&R Rec',
+          'event=recording_completed ignored promptId=${attempt.promptId} '
+              'sessionId=${_engine.state.sessionId} '
+              'flowToken=${_engine.state.flowToken}',
+        );
+        return;
+      }
       ref
           .read(usageTrackerProvider)
           .record(

@@ -47,7 +47,7 @@ void main() {
 
     engine.prepare(sentences: sentences, config: config);
     await engine.startPlaying();
-    engine.onRecordingFinished('/tmp/first-recording.m4a', 0.9);
+    expect(engine.onRecordingFinished('/tmp/first-recording.m4a', 0.9), isTrue);
     expect(latestState?.phase, isA<WaitingInterval>());
     expect(latestState?.controlMode, RepeatControlMode.automatic);
     expect(
@@ -66,7 +66,10 @@ void main() {
 
     engine.prepare(sentences: sentences, config: config);
     await engine.startPlaying();
-    engine.onRecordingFinished('/tmp/second-recording.m4a', 0.9);
+    expect(
+      engine.onRecordingFinished('/tmp/second-recording.m4a', 0.9),
+      isTrue,
+    );
 
     expect(latestState?.phase, isA<WaitingInterval>());
     expect(latestState?.controlMode, RepeatControlMode.automatic);
@@ -115,18 +118,24 @@ void main() {
     await engine.startPlaying();
 
     final currentPromptId = engine.currentPromptId;
-    engine.onRecordingFinished(
-      '/tmp/stale-recording.m4a',
-      0.1,
-      promptId: 'lar:audio-1:stale',
+    expect(
+      engine.onRecordingFinished(
+        '/tmp/stale-recording.m4a',
+        0.1,
+        promptId: 'lar:audio-1:stale',
+      ),
+      isFalse,
     );
     expect(latestState?.phase, isA<Recording>());
     expect(latestState?.recordingPath, isNull);
 
-    engine.onRecordingFinished(
-      '/tmp/current-recording.m4a',
-      0.9,
-      promptId: currentPromptId,
+    expect(
+      engine.onRecordingFinished(
+        '/tmp/current-recording.m4a',
+        0.9,
+        promptId: currentPromptId,
+      ),
+      isTrue,
     );
     expect(latestState?.phase, isA<WaitingInterval>());
     expect(latestState?.recordingPath, '/tmp/current-recording.m4a');

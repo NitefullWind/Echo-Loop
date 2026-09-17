@@ -210,7 +210,7 @@ class ReviewDifficultPracticeState {
 }
 
 /// 难句补练 Provider
-@Riverpod(keepAlive: true)
+@riverpod
 class ReviewDifficultPractice extends _$ReviewDifficultPractice {
   /// 难句列表
   List<Sentence> _sentences = [];
@@ -906,11 +906,20 @@ class ReviewDifficultPractice extends _$ReviewDifficultPractice {
         next.phase == SpeechRecordingPhase.idle &&
         next.currentAttempt != null) {
       final attempt = next.currentAttempt!;
-      _repeatEngine!.onRecordingFinished(
+      final accepted = _repeatEngine!.onRecordingFinished(
         attempt.filePath,
         attempt.score,
         promptId: attempt.promptId,
       );
+      if (!accepted) {
+        AppLogger.log(
+          'RDP-Repeat',
+          'event=recording_completed ignored promptId=${attempt.promptId} '
+              'sessionId=${_repeatEngine!.state.sessionId} '
+              'flowToken=${_repeatEngine!.state.flowToken}',
+        );
+        return;
+      }
       ref
           .read(usageTrackerProvider)
           .record(
