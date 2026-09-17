@@ -671,6 +671,11 @@ class SubscriptionController extends _$SubscriptionController {
     );
   }
 
+  /// 外部 checkout 回跳后的权益收敛；回跳本身不是支付凭证。
+  Future<void> refreshAfterExternalCheckout() {
+    return _convergeAfterTransaction('external-checkout');
+  }
+
   /// 购买 / 恢复前的 fail-closed 身份门禁。
   ///
   /// 权益必须绑定到 Supabase user_id（跨设备、可恢复、能被 webhook 落库）。

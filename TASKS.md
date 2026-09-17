@@ -3,6 +3,10 @@
 > 仅保留未完成任务；历史完成记录见 [docs/tasks-archive/tasks-2026-08-28-full.md](./docs/tasks-archive/tasks-2026-08-28-full.md)。
 
 ## 最近完成
+- [x] 将 App Paddle checkout 请求切换至 `/api/paddle/hosted-checkout`，保持认证、幂等、Hosted URL 解析和权益轮询链路不变，并补充 `transaction_id` 回归断言。**完成时间**: 2026-09-17
+
+- [x] 建立稳定的统一 App Deep Link 路由层，并接入 Paddle Hosted Checkout 的 `echo-loop://paddle-success` 回跳：以 `app_links.uriLinkStream` 作为唯一入口，串行分发并避免冷启动重复；监听提前到 App 初始化、等待第三方启动后复用订阅 Controller 的收敛重试；完成 Android/iOS/macOS Scheme 注册及平台配置回归测试。**完成时间**: 2026-09-17
+
 - [x] 修复查词 TTS 被词典面板监听器反向停止的问题：移除 TTS 状态到文本播放控制器的自取消监听，并补充真实 `speakingKey` 状态变化回归测试。**完成时间**: 2026-09-17
 
 - [x] 将主跟读与难句补练 Controller 收敛为页面级生命周期，延后音频初始化，补充启动/录音接受校验关键日志及回归测试。**完成时间**: 2026-09-17

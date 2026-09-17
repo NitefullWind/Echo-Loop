@@ -847,6 +847,33 @@ void main() {
     });
   });
 
+  test('外部 checkout 回跳 → 复用 forced 回源收敛 premium', () async {
+    await withClock(Clock.fixed(now), () async {
+      final repo = FakeEntitlementRepository.queue([
+        Entitlement.free,
+        proEntitlement,
+      ]);
+      final container = makeContainer(
+        identity: signedIn,
+        repo: repo,
+        cache: FakeEntitlementCache(),
+      );
+      container.read(subscriptionControllerProvider);
+      await pumpEventQueue();
+      expect(
+        container.read(subscriptionControllerProvider).status,
+        EntitlementStatus.free,
+      );
+
+      await container
+          .read(subscriptionControllerProvider.notifier)
+          .refreshAfterExternalCheckout();
+
+      expect(container.read(subscriptionControllerProvider).isActive, isTrue);
+      expect(repo.forceCalls, [false, true]);
+    });
+  });
+
   test('native 登录冷启动 → 读取后端权威源，不读 RC CustomerInfo', () async {
     await withClock(Clock.fixed(now), () async {
       final repo = FakeEntitlementRepository((_) async => proEntitlement);

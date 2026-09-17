@@ -168,20 +168,21 @@ void main() {
     expect(plans.single.purchaseType, PurchaseType.subscription);
   });
 
-  test('createCheckout 只提交 plan/locale，并携带 Bearer 与 UUID 幂等键', () async {
+  test('createCheckout 请求 Hosted Checkout 并携带 Bearer 与 UUID 幂等键', () async {
     when(
       () => dio.post<Map<String, dynamic>>(
-        '/api/paddle/checkout',
+        '/api/paddle/hosted-checkout',
         data: any(named: 'data'),
         options: any(named: 'options'),
       ),
     ).thenAnswer(
       (_) async => Response(
-        requestOptions: RequestOptions(path: '/api/paddle/checkout'),
+        requestOptions: RequestOptions(path: '/api/paddle/hosted-checkout'),
         statusCode: 200,
         data: {
           'attemptId': 'attempt-1',
-          'checkoutUrl': 'https://checkout.paddle.test/txn_1',
+          'checkoutUrl':
+              'https://sandbox-pay.paddle.io/hsc_test?transaction_id=txn_1',
         },
       ),
     );
@@ -192,10 +193,12 @@ void main() {
     );
 
     expect(session.attemptId, 'attempt-1');
-    expect(session.checkoutUrl.host, 'checkout.paddle.test');
+    expect(session.checkoutUrl.host, 'sandbox-pay.paddle.io');
+    expect(session.checkoutUrl.path, '/hsc_test');
+    expect(session.checkoutUrl.queryParameters['transaction_id'], 'txn_1');
     final captured = verify(
       () => dio.post<Map<String, dynamic>>(
-        '/api/paddle/checkout',
+        '/api/paddle/hosted-checkout',
         data: captureAny(named: 'data'),
         options: captureAny(named: 'options'),
       ),
@@ -233,13 +236,13 @@ void main() {
   test('checkout 非 HTTPS URL fail closed', () async {
     when(
       () => dio.post<Map<String, dynamic>>(
-        '/api/paddle/checkout',
+        '/api/paddle/hosted-checkout',
         data: any(named: 'data'),
         options: any(named: 'options'),
       ),
     ).thenAnswer(
       (_) async => Response(
-        requestOptions: RequestOptions(path: '/api/paddle/checkout'),
+        requestOptions: RequestOptions(path: '/api/paddle/hosted-checkout'),
         statusCode: 200,
         data: {'attemptId': 'attempt-1', 'checkoutUrl': 'http://unsafe.test'},
       ),
@@ -254,16 +257,16 @@ void main() {
   test('409 already_entitled 映射为类型化 PurchaseException', () async {
     when(
       () => dio.post<Map<String, dynamic>>(
-        '/api/paddle/checkout',
+        '/api/paddle/hosted-checkout',
         data: any(named: 'data'),
         options: any(named: 'options'),
       ),
     ).thenThrow(
       DioException.badResponse(
         statusCode: 409,
-        requestOptions: RequestOptions(path: '/api/paddle/checkout'),
+        requestOptions: RequestOptions(path: '/api/paddle/hosted-checkout'),
         response: Response<Map<String, dynamic>>(
-          requestOptions: RequestOptions(path: '/api/paddle/checkout'),
+          requestOptions: RequestOptions(path: '/api/paddle/hosted-checkout'),
           statusCode: 409,
           data: {'code': 'already_entitled', 'requestId': 'request-1'},
         ),

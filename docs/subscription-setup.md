@@ -93,6 +93,11 @@ Android 侧载 APK / 桌面等非商店渠道不初始化 RevenueCat 原生 SDK�
 服务端返回的 checkout URL。
 权益只由 Paddle webhook 更新，App 通过 `/api/entitlements` 读回。
 
+Checkout 完成后，Paddle 通过 `echo-loop://paddle-success` 把用户带回 App。
+这个 Deep Link 只表示回跳，不是支付凭证；App 会等待第三方启动完成，再从
+`/api/entitlements` 强制回源确认权益。不要根据 URL 参数或回跳本身直接解锁，
+最终状态以服务端 webhook 和权益接口为准。
+
 构建时注入：
 
 ```

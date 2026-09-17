@@ -34,6 +34,7 @@ import 'providers/retell_prefs_provider.dart';
 import 'providers/difficult_practice_prefs_provider.dart';
 import 'providers/new_user_guide_provider.dart';
 import 'services/app_logger.dart';
+import 'services/app_deep_link_router.dart';
 import 'services/startup_trace.dart';
 import 'services/app_update_migration.dart';
 import 'services/media_kit_debug_initializer.dart';
@@ -49,6 +50,7 @@ import 'features/remote_config/remote_config_providers.dart';
 import 'features/remote_config/remote_config_service.dart';
 import 'features/subscription/providers/subscription_controller.dart';
 import 'features/subscription/providers/subscription_plans_provider.dart';
+import 'features/subscription/services/paddle_deep_link_handler.dart';
 
 void main() async {
   final startupTrace = StartupTrace();
@@ -224,10 +226,11 @@ class _EchoLoopAppState extends ConsumerState<EchoLoopApp>
   ProviderSubscription<AsyncValue<StartupReport>>? _localStartupSubscription;
   ProviderSubscription<AsyncValue<ThirdPartyStartupReport>>?
   _thirdPartyStartupSubscription;
+  AppDeepLinkRouter? _appDeepLinkRouter;
   late final ShowcaseView _showcase;
   bool _hasLoggedRouterCreated = false;
   bool _didStartLocalEffects = false;
-  bool _didStartThirdPartyEffects = false;
+  Future<void>? _thirdPartyEffectsFuture;
 
   @override
   void initState() {
@@ -244,12 +247,27 @@ class _EchoLoopAppState extends ConsumerState<EchoLoopApp>
         .listenManual<AsyncValue<ThirdPartyStartupReport>>(
           thirdPartyStartupProvider,
           (_, next) {
-            if (next.hasValue) unawaited(_startThirdPartyDependentTasks());
+            if (next.hasValue) unawaited(_ensureThirdPartyDependentTasks());
           },
           fireImmediately: true,
         );
 
     WidgetsBinding.instance.addObserver(this);
+
+    final paddleDeepLinkHandler = PaddleDeepLinkHandler(
+      refreshEntitlements: () async {
+        await _ensureThirdPartyDependentTasks();
+        if (!mounted || !ref.read(thirdPartyStartupProvider).hasValue) return;
+        await ref
+            .read(subscriptionControllerProvider.notifier)
+            .refreshAfterExternalCheckout();
+      },
+    );
+    final appDeepLinkRouter = AppDeepLinkRouter.forCurrentPlatform(
+      routes: [paddleDeepLinkHandler.route],
+    );
+    _appDeepLinkRouter = appDeepLinkRouter;
+    unawaited(appDeepLinkRouter.start());
 
     // 新手引导 showcase 控制器全局注册（替代旧的 ShowCaseWidget InheritedWidget）。
     // 整段 tour 走完或被 dismiss 时，通过 GuideShowcaseBus 触发 controller 的
@@ -283,10 +301,7 @@ class _EchoLoopAppState extends ConsumerState<EchoLoopApp>
     final pendingIntent = bridge.takePendingIntent();
     if (pendingIntent != null) _handleNotificationIntent(pendingIntent);
 
-    Future.delayed(
-      const Duration(seconds: 3),
-      _triggerCatalogSync,
-    );
+    Future.delayed(const Duration(seconds: 3), _triggerCatalogSync);
   }
 
   /// 业务内容提交后再预热，不让原生播放器依赖阻塞进入学习页。
@@ -305,9 +320,26 @@ class _EchoLoopAppState extends ConsumerState<EchoLoopApp>
   }
 
   /// 等待后台 SDK 初始化完成后再创建其依赖的订阅与认证控制器。
+  Future<void> _ensureThirdPartyDependentTasks() {
+    final existing = _thirdPartyEffectsFuture;
+    if (existing != null) return existing;
+
+    final operation = _startThirdPartyDependentTasks();
+    _thirdPartyEffectsFuture = operation;
+    return operation;
+  }
+
   Future<void> _startThirdPartyDependentTasks() async {
-    if (!mounted || _didStartThirdPartyEffects) return;
-    _didStartThirdPartyEffects = true;
+    try {
+      await ref.read(thirdPartyStartupProvider.future);
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'ThirdPartyStartup',
+        '等待第三方启动失败，跳过依赖任务 error=$error stack=$stackTrace',
+      );
+      return;
+    }
+    if (!mounted) return;
 
     // RevenueCat 与 Supabase 已完成后台串行初始化；先让 session provider
     // 重新读取 SDK 当前快照，再创建订阅 controller，避免 controller 首次构造时
@@ -346,6 +378,11 @@ class _EchoLoopAppState extends ConsumerState<EchoLoopApp>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _intentSubscription?.cancel();
+    final appDeepLinkRouter = _appDeepLinkRouter;
+    _appDeepLinkRouter = null;
+    if (appDeepLinkRouter != null) {
+      unawaited(appDeepLinkRouter.dispose());
+    }
     _authSessionSubscription?.close();
     _localStartupSubscription?.close();
     _thirdPartyStartupSubscription?.close();

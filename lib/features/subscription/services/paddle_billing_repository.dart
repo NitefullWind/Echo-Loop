@@ -109,7 +109,7 @@ class PaddleBillingRepository {
     );
     try {
       final response = await _authenticatedDio.post<Map<String, dynamic>>(
-        '/api/paddle/checkout',
+        '/api/paddle/hosted-checkout',
         data: {'planId': planId, 'locale': locale},
         options: authRetryOnceOptions(
           headers: {
