@@ -51,6 +51,7 @@ class PaddlePlansService {
   Map<String, dynamic>? _cached;
   DateTime? _lastFetchedAt;
   String? _hash;
+  Future<Map<String, dynamic>?>? _cacheLoadInFlight;
   Map<String, dynamic>? get cached => _cached;
   bool get hasInitialized => _initialized;
   bool _initialized = false;
@@ -63,22 +64,62 @@ class PaddlePlansService {
   Future<File> _file(String name) async =>
       File(p.join((await _resolveDir()).path, name));
 
-  Future<Map<String, dynamic>?> loadCachedPlans() async {
-    if (!_persist) return null;
+  Future<Map<String, dynamic>?> loadCachedPlans() {
+    if (_initialized) return Future<Map<String, dynamic>?>.value(_cached);
+
+    final existing = _cacheLoadInFlight;
+    if (existing != null) return existing;
+
+    final operation = _loadCachedPlans();
+    _cacheLoadInFlight = operation;
+    return operation.whenComplete(() {
+      _cacheLoadInFlight = null;
+    });
+  }
+
+  Future<Map<String, dynamic>?> _loadCachedPlans() async {
+    if (!_persist) {
+      _clearCachedPlans();
+      return null;
+    }
+
     try {
       final payload = await _file('plans.json');
       final meta = await _file('plans.meta.json');
-      if (!await payload.exists() || !await meta.exists()) return null;
+      if (!await payload.exists() || !await meta.exists()) {
+        _clearCachedPlans();
+        return null;
+      }
       final data = jsonDecode(await payload.readAsString());
       final metadata = jsonDecode(await meta.readAsString());
-      if (data is! Map<String, dynamic> || metadata is! Map<String, dynamic>) {
+      if (data is! Map<String, dynamic> ||
+          data['plans'] is! List ||
+          metadata is! Map<String, dynamic>) {
         throw const FormatException('invalid Paddle cache');
       }
+
+      final rawLastFetchedAt = metadata['lastFetchedAt'];
+      final lastFetchedAt = rawLastFetchedAt is String
+          ? DateTime.tryParse(rawLastFetchedAt)
+          : null;
+      if (lastFetchedAt == null) {
+        throw const FormatException('invalid Paddle cache metadata');
+      }
+
+      final actualHash = sha256
+          .convert(utf8.encode(jsonEncode(data)))
+          .toString();
+      final expectedHash = metadata['contentHash'];
+      if (expectedHash is! String) {
+        throw const FormatException('invalid Paddle cache content hash');
+      }
+      if (expectedHash != actualHash) {
+        throw const FormatException('Paddle cache content hash mismatch');
+      }
+
       _cached = data;
-      _hash = metadata['contentHash'] as String?;
-      _lastFetchedAt = DateTime.tryParse(
-        metadata['lastFetchedAt'] as String? ?? '',
-      );
+      _hash = expectedHash;
+      _lastFetchedAt = lastFetchedAt;
       _initialized = true;
       AppLogger.log(
         'Subscription',
@@ -87,26 +128,32 @@ class PaddlePlansService {
       return data;
     } catch (error) {
       AppLogger.log('Subscription', 'Paddle plans 本地缓存读取失败: $error');
-      _initialized = true;
+      _clearCachedPlans();
       return null;
     }
   }
 
-  Future<PaddlePlansRefreshOutcome> refresh({bool force = false}) => _refresh
-      .run(
-        key: 'paddle-plans',
-        force: force,
-        lastRefreshedAt: _lastFetchedAt,
-        throttleWindow: const Duration(days: 1),
-        refresh: _doRefresh,
-      )
-      .then(
-        (run) => switch (run) {
-          RefreshThrottled<PaddlePlansRefreshOutcome>() =>
-            const PaddlePlansThrottled(),
-          RefreshCompleted<PaddlePlansRefreshOutcome>(:final result) => result,
-        },
-      );
+  /// 清除已成功解析但无法映射为业务套餐的缓存，避免坏缓存阻塞后续刷新。
+  void discardCachedPlans() => _clearCachedPlans();
+
+  /// 先确保缓存已加载，再按节流规则执行一次 Paddle 价格刷新。
+  Future<PaddlePlansRefreshOutcome> refresh({bool force = false}) async {
+    await loadCachedPlans();
+
+    final run = await _refresh.run(
+      key: 'paddle-plans',
+      force: force,
+      lastRefreshedAt: _lastFetchedAt,
+      throttleWindow: const Duration(days: 1),
+      refresh: _doRefresh,
+    );
+
+    return switch (run) {
+      RefreshThrottled<PaddlePlansRefreshOutcome>() =>
+        const PaddlePlansThrottled(),
+      RefreshCompleted<PaddlePlansRefreshOutcome>(:final result) => result,
+    };
+  }
 
   Future<PaddlePlansRefreshOutcome> _doRefresh() async {
     try {
@@ -130,10 +177,7 @@ class PaddlePlansService {
             );
           } catch (error) {
             // 与 catalog 一致：内容未变化时，meta 写失败不应否定已成功的请求。
-            AppLogger.log(
-              'Subscription',
-              'Paddle plans meta 写入失败（忽略）: $error',
-            );
+            AppLogger.log('Subscription', 'Paddle plans meta 写入失败（忽略）: $error');
           }
         }
         _lastFetchedAt = now;
@@ -173,4 +217,11 @@ class PaddlePlansService {
       'serverTime': serverTime,
     }),
   );
+
+  void _clearCachedPlans() {
+    _cached = null;
+    _hash = null;
+    _lastFetchedAt = null;
+    _initialized = true;
+  }
 }

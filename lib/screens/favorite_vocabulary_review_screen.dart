@@ -50,6 +50,8 @@ class FavoriteVocabularyReviewScreen extends ConsumerStatefulWidget {
 class _FavoriteVocabularyReviewScreenState
     extends ConsumerState<FavoriteVocabularyReviewScreen>
     with WakelockMixin {
+  late final FavoriteVocabularyReview _review;
+  Future<void>? _disposeSessionFuture;
   bool _isExiting = false;
   bool _isDictionaryPanelOpen = false;
   final GlobalKey<DictionaryPanelHostState> _dictionaryHostKey =
@@ -58,21 +60,28 @@ class _FavoriteVocabularyReviewScreenState
   @override
   void initState() {
     super.initState();
+    _review = ref.read(favoriteVocabularyReviewProvider.notifier);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        unawaited(
-          ref
-              .read(favoriteVocabularyReviewProvider.notifier)
-              .startCurrentCard(),
-        );
+        unawaited(_review.startCurrentCard());
       }
     });
+  }
+
+  /// 页面生命周期内只启动一次会话收尾，避免返回回调与 dispose 兜底重复刷统计。
+  Future<void> _disposeSessionOnce() =>
+      _disposeSessionFuture ??= _review.disposeSession();
+
+  @override
+  void dispose() {
+    // 外部路由替换不会经过页面返回按钮，销毁时后台启动同一幂等收尾。
+    scheduleMicrotask(() => unawaited(_disposeSessionOnce()));
+    super.dispose();
   }
 
   Future<void> _exit() async {
     if (_isExiting) return;
     _isExiting = true;
-    final review = ref.read(favoriteVocabularyReviewProvider.notifier);
     if (mounted) {
       if (context.canPop()) {
         context.pop();
@@ -80,13 +89,11 @@ class _FavoriteVocabularyReviewScreenState
         context.go(AppRoutes.favorites);
       }
     }
-    await review.disposeSession();
+    await _disposeSessionOnce();
   }
 
   Future<void> _openSettings() async {
-    await ref
-        .read(favoriteVocabularyReviewProvider.notifier)
-        .interruptPlayback();
+    await _review.interruptPlayback();
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
@@ -101,9 +108,7 @@ class _FavoriteVocabularyReviewScreenState
   }
 
   Future<void> _removeCurrent() async {
-    await ref
-        .read(favoriteVocabularyReviewProvider.notifier)
-        .removeCurrentVocabulary();
+    await _review.removeCurrentVocabulary();
     if (!mounted) return;
     final error = ref.read(favoriteVocabularyReviewProvider).removeError;
     if (error != null) {
@@ -130,7 +135,7 @@ class _FavoriteVocabularyReviewScreenState
     final card = state.currentCard;
     final completionSummary = state.completionSummary;
     final l10n = AppLocalizations.of(context)!;
-    final player = ref.read(favoriteVocabularyReviewProvider.notifier);
+    final player = _review;
 
     return StudyActivityDetector(
       onActivity: player.markStudyActivity,
@@ -143,11 +148,7 @@ class _FavoriteVocabularyReviewScreenState
               // 系统返回手势已完成，释放本次复习会话但不要再次触发 pop。
               if (!_isExiting) {
                 _isExiting = true;
-                unawaited(
-                  ref
-                      .read(favoriteVocabularyReviewProvider.notifier)
-                      .disposeSession(),
-                );
+                unawaited(_disposeSessionOnce());
               }
               return;
             }

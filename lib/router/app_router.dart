@@ -49,8 +49,6 @@ import '../screens/backup_restore_screen.dart';
 import '../screens/favorite_vocabulary_review_screen.dart';
 import '../screens/activity_calendar_screen.dart';
 import '../screens/review_statistics_screen.dart';
-import '../providers/learning_session/bookmark_review_provider.dart';
-import '../providers/learning_session/favorite_vocabulary_review_provider.dart';
 import 'main_shell.dart';
 
 /// 全局根导航器 key
@@ -231,22 +229,6 @@ GoRoute _sentenceDetailRoute() => GoRoute(
     return SentenceDetailScreen(args: args);
   },
 );
-
-/// 收藏句复习路由退出钩子，等待媒体停止和统计队列刷完。
-Future<bool> _finishBookmarkReviewRoute(Ref ref) async {
-  AppLogger.log('StudyExit', 'favorite sentence route onExit start');
-  await ref.read(bookmarkReviewProvider.notifier).disposeSession();
-  AppLogger.log('StudyExit', 'favorite sentence route onExit complete');
-  return true;
-}
-
-/// 收藏词汇复习路由退出钩子，等待媒体停止和统计队列刷完。
-Future<bool> _finishFavoriteVocabularyReviewRoute(Ref ref) async {
-  AppLogger.log('StudyExit', 'favorite vocabulary route onExit start');
-  await ref.read(favoriteVocabularyReviewProvider.notifier).disposeSession();
-  AppLogger.log('StudyExit', 'favorite vocabulary route onExit complete');
-  return true;
-}
 
 /// 音频随心听播放器路由工厂。合集内变体挂在 `/collections/:collectionId` 之下
 /// （[path] 传相对段），独立音频变体挂在顶层（[path] 传绝对路径）。
@@ -539,7 +521,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/bookmark-review',
         parentNavigatorKey: rootNavigatorKey,
-        onExit: (_, __) => _finishBookmarkReviewRoute(ref),
         builder: (context, state) => const BookmarkReviewScreen(),
       ),
       // 句子详情 / PDF 预览已下沉为各入口页的嵌套子路由（§7.17），
@@ -548,7 +529,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.favoriteVocabularyReview,
         parentNavigatorKey: rootNavigatorKey,
-        onExit: (_, __) => _finishFavoriteVocabularyReviewRoute(ref),
         builder: (context, state) => const FavoriteVocabularyReviewScreen(),
       ),
       // 活动日历（全屏）

@@ -61,12 +61,34 @@ class PaddleBillingRepository {
     : _authenticatedDio = dio,
       _plans = PaddlePlansService(dio: dio, persist: false);
 
+  /// 为缓存与刷新链路测试注入真实套餐服务，避免测试绕过持久化行为。
+  @visibleForTesting
+  PaddleBillingRepository.withPlans({
+    required Dio authenticatedDio,
+    required PaddlePlansService plans,
+  }) : _authenticatedDio = authenticatedDio,
+       _plans = plans;
+
   final Dio _authenticatedDio;
   final PaddlePlansService _plans;
 
-  /// 从服务端读取 Paddle 套餐，地区化价格由后端按请求来源判定。
+  /// 只读取本地 Paddle 套餐缓存，不触发网络请求。
+  Future<List<SubscriptionPlan>?> loadCachedPlans() async {
+    final data = await _plans.loadCachedPlans();
+    if (data == null) return null;
+
+    try {
+      return _plansFrom(data);
+    } catch (error, stackTrace) {
+      AppLogger.log('Subscription', 'Paddle plans 缓存映射失败，丢弃缓存: $error');
+      AppLogger.log('Subscription', stackTrace.toString());
+      _plans.discardCachedPlans();
+      return null;
+    }
+  }
+
+  /// 刷新服务端 Paddle 套餐；地区化价格由后端按请求来源判定。
   Future<List<SubscriptionPlan>> fetchPlans({bool force = false}) async {
-    if (!_plans.hasInitialized) await _plans.loadCachedPlans();
     await _plans.refresh(force: force);
     final data = _plans.cached;
     if (data == null) {

@@ -101,6 +101,33 @@ void main() {
     );
   });
 
+  testWidgets('实时日志只显示最近 500 条', (tester) async {
+    for (var index = 0; index < AppLogger.maxRetainedEntries + 20; index++) {
+      AppLogger.log('Live', 'line-$index');
+    }
+    await tester.pumpWidget(const MaterialApp(home: LogViewerScreen()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('日志（最近 500 条）'), findsOneWidget);
+    expect(find.textContaining('line-0'), findsNothing);
+    expect(find.textContaining('line-519'), findsOneWidget);
+    expect(find.text('仅显示最近 500 条；分享日志可导出完整记录'), findsOneWidget);
+  });
+
+  testWidgets('实时追加日志后展示数量仍限制为 500 条', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: LogViewerScreen()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    for (var index = 0; index < AppLogger.maxRetainedEntries + 20; index++) {
+      AppLogger.log('Live', 'line-$index');
+    }
+    await tester.pump();
+
+    expect(find.text('日志（最近 500 条）'), findsOneWidget);
+  });
+
   testWidgets('点击分享导出包含设备信息和日志内容的 ZIP 支持包', (tester) async {
     AppLogger.log('Manual', 'before share');
     final logDirectory = Directory('${tempDir.path}/logs')

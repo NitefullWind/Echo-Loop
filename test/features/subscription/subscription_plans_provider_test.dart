@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:echo_loop/features/subscription/models/entitlement.dart';
 import 'package:echo_loop/features/subscription/models/subscription_plan.dart';
 import 'package:echo_loop/features/subscription/providers/subscription_plans_provider.dart';
+import 'package:echo_loop/features/subscription/services/paddle_billing_repository.dart';
 import 'package:echo_loop/features/subscription/services/purchase_service.dart';
 import 'package:echo_loop/features/subscription/services/revenuecat_purchase_service.dart'
     show purchaseServiceProvider;
@@ -78,13 +80,32 @@ class _FakePurchaseService implements PurchaseService {
       const RestorePurchaseResult(entitlement: Entitlement.free);
 }
 
+class _FakePaddleBillingRepository extends PaddleBillingRepository {
+  _FakePaddleBillingRepository() : super.withDio(Dio());
+
+  List<SubscriptionPlan>? cachedPlans;
+  Future<List<SubscriptionPlan>> Function(bool force)? onFetch;
+  final List<bool> forceCalls = [];
+
+  @override
+  Future<List<SubscriptionPlan>?> loadCachedPlans() async => cachedPlans;
+
+  @override
+  Future<List<SubscriptionPlan>> fetchPlans({bool force = false}) {
+    forceCalls.add(force);
+    return onFetch?.call(force) ?? Future.value(cachedPlans ?? _chinaPlans);
+  }
+}
+
 void main() {
   late _FakePurchaseService purchases;
   late DateTime now;
   late ProviderContainer container;
+  late _FakePaddleBillingRepository paddleRepository;
 
   setUp(() {
     purchases = _FakePurchaseService();
+    paddleRepository = _FakePaddleBillingRepository();
     now = DateTime.utc(2026, 7, 13, 8);
     container = ProviderContainer(
       overrides: [
@@ -93,6 +114,7 @@ void main() {
         subscriptionPlansTimeoutProvider.overrideWithValue(
           const Duration(milliseconds: 20),
         ),
+        paddleBillingRepositoryProvider.overrideWithValue(paddleRepository),
       ],
     );
   });
@@ -269,5 +291,105 @@ void main() {
 
     expect(fullRequest, isTrue);
     expect(container.read(subscriptionPlansProvider).valueOrNull, _chinaPlans);
+  });
+
+  test('Paddle 缓存先展示，网络完成后更新价格', () async {
+    const cachedPlans = [
+      SubscriptionPlan(
+        planId: 'plus_monthly',
+        title: 'Monthly',
+        priceString: r'$4.99',
+        period: SubscriptionPeriod.monthly,
+      ),
+    ];
+    const updatedPlans = [
+      SubscriptionPlan(
+        planId: 'plus_monthly',
+        title: 'Monthly',
+        priceString: r'$5.99',
+        period: SubscriptionPeriod.monthly,
+      ),
+    ];
+    final pending = Completer<List<SubscriptionPlan>>();
+    paddleRepository.cachedPlans = cachedPlans;
+    paddleRepository.onFetch = (_) => pending.future;
+
+    final refresh = container
+        .read(paddleSubscriptionPlansProvider.notifier)
+        .refresh(force: true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      container.read(paddleSubscriptionPlansProvider).valueOrNull,
+      cachedPlans,
+    );
+    expect(container.read(paddleSubscriptionPlansProvider).isLoading, isFalse);
+
+    pending.complete(updatedPlans);
+    await refresh;
+    expect(
+      container.read(paddleSubscriptionPlansProvider).valueOrNull,
+      updatedPlans,
+    );
+  });
+
+  test('Paddle 后台刷新失败时保留缓存价格', () async {
+    paddleRepository.cachedPlans = _usPlans;
+    paddleRepository.onFetch = (_) async => throw StateError('offline');
+
+    await container
+        .read(paddleSubscriptionPlansProvider.notifier)
+        .refresh(force: true);
+
+    expect(
+      container.read(paddleSubscriptionPlansProvider).valueOrNull,
+      _usPlans,
+    );
+    expect(container.read(paddleSubscriptionPlansProvider).hasError, isFalse);
+  });
+
+  test('Paddle 无缓存且首次请求失败进入错误态', () async {
+    paddleRepository.onFetch = (_) async => throw StateError('offline');
+
+    await container
+        .read(paddleSubscriptionPlansProvider.notifier)
+        .refresh(force: true);
+
+    expect(container.read(paddleSubscriptionPlansProvider).hasError, isTrue);
+  });
+
+  test('Paddle 旧 generation 不能覆盖较新的结果', () async {
+    final first = Completer<List<SubscriptionPlan>>();
+    var requestCount = 0;
+    paddleRepository.onFetch = (_) {
+      requestCount++;
+      return requestCount == 1
+          ? first.future
+          : Future<List<SubscriptionPlan>>.value(_usPlans);
+    };
+
+    final firstRefresh = container
+        .read(paddleSubscriptionPlansProvider.notifier)
+        .refresh(force: true);
+    await Future<void>.delayed(Duration.zero);
+    await container
+        .read(paddleSubscriptionPlansProvider.notifier)
+        .refresh(force: true);
+
+    first.complete(_chinaPlans);
+    await firstRefresh;
+
+    expect(
+      container.read(paddleSubscriptionPlansProvider).valueOrNull,
+      _usPlans,
+    );
+  });
+
+  test('Paddle refresh 会传递 force 参数', () async {
+    await container
+        .read(paddleSubscriptionPlansProvider.notifier)
+        .refresh(force: true);
+
+    expect(paddleRepository.forceCalls, [true]);
   });
 }

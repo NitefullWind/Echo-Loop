@@ -40,6 +40,8 @@ class BookmarkReviewScreen extends ConsumerStatefulWidget {
 
 class _BookmarkReviewScreenState extends ConsumerState<BookmarkReviewScreen>
     with WakelockMixin {
+  late final BookmarkReview _review;
+  Future<void>? _disposeSessionFuture;
   bool _isExiting = false;
   bool _isDictionaryPanelOpen = false;
   final GlobalKey<DictionaryPanelHostState> _dictionaryHostKey =
@@ -48,17 +50,28 @@ class _BookmarkReviewScreenState extends ConsumerState<BookmarkReviewScreen>
   @override
   void initState() {
     super.initState();
+    _review = ref.read(bookmarkReviewProvider.notifier);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        unawaited(ref.read(bookmarkReviewProvider.notifier).startCurrentCard());
+        unawaited(_review.startCurrentCard());
       }
     });
+  }
+
+  /// 页面生命周期内只启动一次会话收尾，避免返回回调与 dispose 兜底重复刷统计。
+  Future<void> _disposeSessionOnce() =>
+      _disposeSessionFuture ??= _review.disposeSession();
+
+  @override
+  void dispose() {
+    // 外部路由替换不会经过页面返回按钮，销毁时后台启动同一幂等收尾。
+    scheduleMicrotask(() => unawaited(_disposeSessionOnce()));
+    super.dispose();
   }
 
   Future<void> _exit() async {
     if (_isExiting) return;
     _isExiting = true;
-    final review = ref.read(bookmarkReviewProvider.notifier);
     if (mounted) {
       if (context.canPop()) {
         context.pop();
@@ -66,11 +79,11 @@ class _BookmarkReviewScreenState extends ConsumerState<BookmarkReviewScreen>
         context.go(AppRoutes.favorites);
       }
     }
-    await review.disposeSession();
+    await _disposeSessionOnce();
   }
 
   Future<void> _openSettings() async {
-    await ref.read(bookmarkReviewProvider.notifier).interruptPlayback();
+    await _review.interruptPlayback();
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
@@ -85,7 +98,7 @@ class _BookmarkReviewScreenState extends ConsumerState<BookmarkReviewScreen>
   }
 
   Future<void> _removeCurrent() async {
-    await ref.read(bookmarkReviewProvider.notifier).removeCurrentBookmark();
+    await _review.removeCurrentBookmark();
     if (!mounted) return;
     final error = ref.read(bookmarkReviewProvider).removeError;
     if (error != null) {
@@ -114,7 +127,7 @@ class _BookmarkReviewScreenState extends ConsumerState<BookmarkReviewScreen>
     final card = state.currentCard;
     final completionSummary = state.completionSummary;
     final l10n = AppLocalizations.of(context)!;
-    final player = ref.read(bookmarkReviewProvider.notifier);
+    final player = _review;
 
     return StudyActivityDetector(
       onActivity: player.markStudyActivity,
@@ -127,9 +140,7 @@ class _BookmarkReviewScreenState extends ConsumerState<BookmarkReviewScreen>
               // 原生返回手势已完成，只释放会话，避免再次触发 pop。
               if (!_isExiting) {
                 _isExiting = true;
-                unawaited(
-                  ref.read(bookmarkReviewProvider.notifier).disposeSession(),
-                );
+                unawaited(_disposeSessionOnce());
               }
               return;
             }

@@ -6,6 +6,7 @@
 library;
 
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -32,7 +33,8 @@ class AppLogger {
   AppLogger._();
   static final instance = AppLogger._();
 
-  static const _maxEntries = 500;
+  /// 日志页和内存环形缓冲区统一保留的最近日志条数。
+  static const maxRetainedEntries = 500;
   static const _defaultMaxFileSizeKB = 5 * 1024;
   static const _latestFileName = 'app.log';
 
@@ -96,29 +98,39 @@ class AppLogger {
     }
   }
 
-  /// 读取活动文件与历史轮转文件，按发生时间拼接，供日志页和分享功能使用。
-  static Future<String?> readPersistedLog() async {
+  /// 流式读取持久化日志的尾部，供日志页面恢复最近记录。
+  ///
+  /// 文件按时间从旧到新逐行读取，内存中始终只保留最后 [limit] 条，避免把
+  /// 多个轮转文件拼接成一个大字符串。完整日志分享由日志页面直接打包原文件，
+  /// 不经过此接口。
+  static Future<List<LogEntry>> readRecentPersistedEntries({
+    int limit = maxRetainedEntries,
+  }) async {
+    if (limit <= 0) return const <LogEntry>[];
     final directory = _logDirectory;
-    if (directory == null) return null;
+    if (directory == null) return const <LogEntry>[];
+
+    final recentEntries = Queue<LogEntry>();
     try {
       final files = await _logFilesOldestFirst(directory);
-      if (files.isEmpty) return null;
-      final parts = await Future.wait(files.map((file) => file.readAsString()));
-      return parts.where((part) => part.isNotEmpty).join();
+      for (final file in files) {
+        final lines = file
+            .openRead()
+            .transform(const Utf8Decoder(allowMalformed: true))
+            .transform(const LineSplitter());
+        await for (final line in lines) {
+          final entry = _parsePersistedLine(line);
+          if (entry == null) continue;
+          if (recentEntries.length >= limit) recentEntries.removeFirst();
+          recentEntries.addLast(entry);
+        }
+      }
+      return List<LogEntry>.unmodifiable(recentEntries);
     } catch (error) {
       // 日志读取失败不可影响主流程，但控制台保留诊断信息。
-      print('读取持久化日志失败: $error');
-      return null;
+      print('读取最近持久化日志失败: $error');
+      return List<LogEntry>.unmodifiable(recentEntries);
     }
-  }
-
-  /// 将持久化文本解析为日志条目，供日志页面按需恢复历史显示。
-  static List<LogEntry> parsePersistedEntries(String text) {
-    return text
-        .split('\n')
-        .map(_parsePersistedLine)
-        .whereType<LogEntry>()
-        .toList(growable: false);
   }
 
   /// 清空内存日志。持久化日志由 [clearPersistedLogs] 显式清理，避免测试和普通
@@ -159,7 +171,7 @@ class AppLogger {
 
     final logger = instance;
     logger._entries.addLast(entry);
-    if (logger._entries.length > _maxEntries) {
+    if (logger._entries.length > maxRetainedEntries) {
       logger._entries.removeFirst();
     }
     logger._notifyListeners();

@@ -1,6 +1,11 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:echo_loop/features/subscription/models/subscription_plan.dart';
 import 'package:echo_loop/features/subscription/services/paddle_billing_repository.dart';
+import 'package:echo_loop/features/subscription/services/paddle_plans_service.dart';
 import 'package:echo_loop/features/subscription/services/purchase_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -14,6 +19,55 @@ void main() {
   setUp(() {
     dio = _MockDio();
     repository = PaddleBillingRepository.withDio(dio);
+  });
+
+  test('loadCachedPlans 只读取缓存，不触发网络请求', () async {
+    expect(await repository.loadCachedPlans(), isNull);
+    verifyNever(() => dio.get<Map<String, dynamic>>('/api/paddle/plans'));
+  });
+
+  test('缓存价格在 Paddle 刷新失败时仍可用于展示', () async {
+    final tempDir = await Directory.systemTemp.createTemp(
+      'paddle_billing_repository_test_',
+    );
+    addTearDown(() => tempDir.delete(recursive: true));
+    final data = <String, dynamic>{
+      'plans': [
+        {
+          'planId': 'plus_monthly',
+          'priceString': r'US$8.99',
+          'hasFreeTrial': false,
+          'trialDays': 0,
+          'introOffer': null,
+        },
+      ],
+    };
+    final body = jsonEncode(data);
+    await File('${tempDir.path}/plans.json').writeAsString(body);
+    await File('${tempDir.path}/plans.meta.json').writeAsString(
+      jsonEncode({
+        'contentHash': sha256.convert(utf8.encode(body)).toString(),
+        'lastFetchedAt': '2026-09-16T00:00:00.000Z',
+      }),
+    );
+    when(
+      () => dio.get<Map<String, dynamic>>('/api/paddle/plans'),
+    ).thenThrow(
+      DioException(
+        requestOptions: RequestOptions(path: '/api/paddle/plans'),
+        type: DioExceptionType.connectionError,
+      ),
+    );
+    repository = PaddleBillingRepository.withPlans(
+      authenticatedDio: dio,
+      plans: PaddlePlansService(dio: dio, resolveDir: () async => tempDir),
+    );
+
+    final plans = await repository.fetchPlans(force: true);
+
+    expect(plans.single.planId, 'plus_monthly');
+    expect(plans.single.priceString, r'US$8.99');
+    verify(() => dio.get<Map<String, dynamic>>('/api/paddle/plans')).called(1);
   });
 
   test('fetchPlans 映射月付、年付和首年优惠', () async {

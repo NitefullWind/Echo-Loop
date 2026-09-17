@@ -111,26 +111,23 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
 
   /// 日志页打开后才读取跨启动历史；内存日志继续用于实时刷新。
   Future<void> _loadPersistedEntries() async {
-    final text = await AppLogger.readPersistedLog();
+    final entries = await AppLogger.readRecentPersistedEntries();
     if (!mounted) return;
     setState(() {
-      _persistedEntries = text == null
-          ? const <LogEntry>[]
-          : AppLogger.parsePersistedEntries(text);
+      _persistedEntries = entries;
       _mergePersistedAndCurrentEntries();
     });
   }
 
   void _mergePersistedAndCurrentEntries() {
-    final persistedLines = _persistedEntries
-        .map((entry) => entry.toString())
-        .toSet();
-    _displayedEntries = [
-      ..._persistedEntries,
-      ...AppLogger.instance.entries.where(
-        (entry) => !persistedLines.contains(entry.toString()),
-      ),
-    ];
+    final mergedByLine = <String, LogEntry>{};
+    for (final entry in [..._persistedEntries, ...AppLogger.instance.entries]) {
+      mergedByLine[entry.toString()] = entry;
+    }
+    final merged = mergedByLine.values.toList(growable: false);
+    _displayedEntries = merged.length <= AppLogger.maxRetainedEntries
+        ? merged
+        : merged.sublist(merged.length - AppLogger.maxRetainedEntries);
   }
 
   Future<void> _clearLogs() async {
@@ -222,7 +219,7 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('日志 (${entries.length})'),
+        title: Text('日志（最近 ${entries.length} 条）'),
         centerTitle: true,
         actions: [
           IconButton(
@@ -246,14 +243,32 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
                 ),
               ),
             )
-          : ListView.builder(
-              controller: _scrollController,
-              itemCount: entries.length,
-              padding: const EdgeInsets.all(AppSpacing.s),
-              itemBuilder: (context, index) {
-                final entry = entries[index];
-                return _LogEntryTile(entry: entry);
-              },
+          : Column(
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    AppSpacing.s,
+                    AppSpacing.s,
+                    AppSpacing.s,
+                    0,
+                  ),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('仅显示最近 500 条；分享日志可导出完整记录'),
+                  ),
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    itemCount: entries.length,
+                    padding: const EdgeInsets.all(AppSpacing.s),
+                    itemBuilder: (context, index) {
+                      final entry = entries[index];
+                      return _LogEntryTile(entry: entry);
+                    },
+                  ),
+                ),
+              ],
             ),
     );
   }

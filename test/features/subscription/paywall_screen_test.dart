@@ -131,6 +131,44 @@ class _FixedPaddlePlansController extends PaddleSubscriptionPlansController {
   Future<void> refresh({bool force = false}) async {}
 }
 
+class _SpyPlansController extends SubscriptionPlansController {
+  _SpyPlansController(this._plans);
+
+  final List<SubscriptionPlan> _plans;
+  final List<bool> forceCalls = [];
+
+  @override
+  AsyncValue<List<SubscriptionPlan>> build() => AsyncData(_plans);
+
+  @override
+  Future<void> refresh({bool force = false}) async {
+    forceCalls.add(force);
+  }
+}
+
+class _SpyPaddlePlansController extends PaddleSubscriptionPlansController {
+  _SpyPaddlePlansController(this._plans);
+
+  final List<SubscriptionPlan> _plans;
+  final List<bool> forceCalls = [];
+
+  @override
+  AsyncValue<List<SubscriptionPlan>> build() => AsyncData(_plans);
+
+  @override
+  Future<void> refresh({bool force = false}) async {
+    forceCalls.add(force);
+  }
+}
+
+class _ErrorSpyPlansController extends _SpyPlansController {
+  _ErrorSpyPlansController() : super(const []);
+
+  @override
+  AsyncValue<List<SubscriptionPlan>> build() =>
+      AsyncError(StateError('store plans unavailable'), StackTrace.current);
+}
+
 /// Paywall 只需要触发 remote config 后台刷新；测试中用假 service 避免依赖 SP。
 class _SpyRemoteConfigService implements RemoteConfigService {
   int fetchCalls = 0;
@@ -246,6 +284,8 @@ Widget _harness({
   List<SubscriptionPlan> paddlePlans = _paddlePlans,
   bool? authenticated,
   SubscriptionController Function()? controller,
+  SubscriptionPlansController Function()? plansController,
+  PaddleSubscriptionPlansController Function()? paddlePlansController,
   // 测试宿主（macOS/无 key）默认不支持订阅，这里默认置 true 以覆盖购买页 UI。
   bool available = true,
   // 网页支付渠道（侧载 APK / 桌面）：切换到浏览器结账购买态。
@@ -271,12 +311,13 @@ Widget _harness({
         controller ?? () => _FixedController(state),
       ),
       subscriptionPlansProvider.overrideWith(
-        () => storePlansError
-            ? _ErrorPlansController()
-            : _FixedPlansController(plans),
+        plansController ??
+            () => storePlansError
+                ? _ErrorPlansController()
+                : _FixedPlansController(plans),
       ),
       paddleSubscriptionPlansProvider.overrideWith(
-        () => _FixedPaddlePlansController(paddlePlans),
+        paddlePlansController ?? () => _FixedPaddlePlansController(paddlePlans),
       ),
       if (authenticated != null)
         isAuthenticatedProvider.overrideWithValue(authenticated),
@@ -364,6 +405,87 @@ void main() {
     await tester.pump();
 
     expect(remoteConfigService.fetchCalls, 1);
+  });
+
+  testWidgets('Direct Paywall 进入时强制刷新 Paddle 价格', (tester) async {
+    final storeController = _SpyPlansController(_plans);
+    final paddleController = _SpyPaddlePlansController(_paddlePlans);
+    await tester.pumpWidget(
+      _harness(
+        state: const EntitlementState.free(),
+        plansController: () => storeController,
+        paddlePlansController: () => paddleController,
+        webCheckout: true,
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(paddleController.forceCalls, [true]);
+    expect(storeController.forceCalls, isEmpty);
+    expect(find.text(r'$24.99'), findsOneWidget);
+    expect(find.text(r'$39.99'), findsNothing);
+  });
+
+  testWidgets('商店 Paywall 进入时强制刷新原生价格', (tester) async {
+    final storeController = _SpyPlansController(_plans);
+    final paddleController = _SpyPaddlePlansController(_paddlePlans);
+    await tester.pumpWidget(
+      _harness(
+        state: const EntitlementState.free(),
+        plansController: () => storeController,
+        paddlePlansController: () => paddleController,
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(storeController.forceCalls, [true]);
+    expect(paddleController.forceCalls, isEmpty);
+    expect(find.text(r'$39.99'), findsOneWidget);
+  });
+
+  testWidgets('商店包切换 Web 兜底时强制刷新 Paddle 且不清空当前价格', (tester) async {
+    final storeController = _SpyPlansController(_plans);
+    final paddleController = _SpyPaddlePlansController(_paddlePlans);
+    await tester.pumpWidget(
+      _harness(
+        state: const EntitlementState.free(),
+        plansController: () => storeController,
+        paddlePlansController: () => paddleController,
+        showStoreWebCheckoutFallback: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(r'$39.99'), findsOneWidget);
+
+    await tester.tap(
+      find.widgetWithText(
+        OutlinedButton,
+        'Store payment not working? Use web checkout',
+      ),
+    );
+    await tester.pump();
+
+    expect(paddleController.forceCalls, [true]);
+    expect(find.text(r'$24.99'), findsOneWidget);
+  });
+
+  testWidgets('价格错误态重试直接刷新原 Controller，不 invalidate Provider', (tester) async {
+    final storeController = _ErrorSpyPlansController();
+    await tester.pumpWidget(
+      _harness(
+        state: const EntitlementState.free(),
+        plansController: () => storeController,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(storeController.forceCalls, [true]);
+
+    await tester.tap(find.text('Retry'));
+    await tester.pump();
+
+    expect(storeController.forceCalls, [true, true]);
   });
 
   testWidgets('direct 渠道：展示 Paddle 订阅与一次性年付，默认仍选中年订', (tester) async {

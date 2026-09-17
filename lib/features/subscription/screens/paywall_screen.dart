@@ -101,13 +101,18 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
       final webMode = ref.read(webCheckoutModeProvider);
       AppLogger.log(
         'Subscription',
-        'paywall init refresh plans: webMode=$webMode',
+        'paywall init refresh plans: source=${webMode ? "paddle" : "store"} '
+            'force=true',
       );
       unawaited(
         ref.read(remoteConfigProvider.notifier).refreshIfStale(force: true),
       );
       unawaited(
-        ref.read(subscriptionPlansProvider.notifier).refresh(force: true),
+        webMode
+            ? ref
+                  .read(paddleSubscriptionPlansProvider.notifier)
+                  .refresh(force: true)
+            : ref.read(subscriptionPlansProvider.notifier).refresh(force: true),
       );
       unawaited(
         ref.read(subscriptionControllerProvider.notifier).refreshIfStale(),
@@ -148,10 +153,11 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
         webMode || (_useWebCheckoutFallback && showStoreWebCheckoutFallback);
     final usingStoreWebCheckoutFallback =
         _useWebCheckoutFallback && showStoreWebCheckoutFallback;
+    final usingPaddlePlans = usingWebCheckout;
     final plansAsync = isPremium
         ? null
         : ref.watch(
-            usingStoreWebCheckoutFallback
+            usingPaddlePlans
                 ? paddleSubscriptionPlansProvider
                 : subscriptionPlansProvider,
           );
@@ -390,7 +396,7 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
       );
     }
     final plansAsync = ref.watch(
-      usingStoreWebCheckoutFallback
+      webMode || usingStoreWebCheckoutFallback
           ? paddleSubscriptionPlansProvider
           : subscriptionPlansProvider,
     );
@@ -408,7 +414,7 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
               l10n: l10n,
               onRetry: () {
                 AppLogger.log('Subscription', 'paywall 套餐重试点击');
-                _invalidatePlans(usingStoreWebCheckoutFallback);
+                _refreshPlans(webMode || usingStoreWebCheckoutFallback);
               },
             ),
             if (showStoreWebCheckoutFallback)
@@ -429,7 +435,7 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
                 l10n: l10n,
                 onRetry: () {
                   AppLogger.log('Subscription', 'paywall 空套餐重试点击');
-                  _invalidatePlans(usingStoreWebCheckoutFallback);
+                  _refreshPlans(webMode || usingStoreWebCheckoutFallback);
                 },
               ),
               if (showStoreWebCheckoutFallback)
@@ -526,20 +532,32 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
     return _busy || _waitingForWeb
         ? null
         : () {
-            setState(() => _useWebCheckoutFallback = !usingWebCheckout);
+            final enableWebCheckout = !usingWebCheckout;
+            setState(() => _useWebCheckoutFallback = enableWebCheckout);
+            unawaited(
+              enableWebCheckout
+                  ? ref
+                        .read(paddleSubscriptionPlansProvider.notifier)
+                        .refresh(force: true)
+                  : ref
+                        .read(subscriptionPlansProvider.notifier)
+                        .refresh(force: true),
+            );
             AppLogger.log(
               'Subscription',
-              '商店包 Web 支付切换: enabled=${!usingWebCheckout}',
+              '商店包 Web 支付切换: enabled=$enableWebCheckout',
             );
           };
   }
 
-  void _invalidatePlans(bool usingStoreWebCheckoutFallback) {
-    if (usingStoreWebCheckoutFallback) {
-      ref.invalidate(paddleSubscriptionPlansProvider);
-    } else {
-      ref.invalidate(subscriptionPlansProvider);
-    }
+  void _refreshPlans(bool usePaddlePlans) {
+    unawaited(
+      usePaddlePlans
+          ? ref
+                .read(paddleSubscriptionPlansProvider.notifier)
+                .refresh(force: true)
+          : ref.read(subscriptionPlansProvider.notifier).refresh(force: true),
+    );
   }
 
   /// 发起 Paddle 结账：登录 → 服务端创建 transaction → 系统浏览器打开 →

@@ -30,8 +30,7 @@ final subscriptionPlansNowProvider = Provider<DateTime Function()>((ref) {
 
 /// 当前可购买套餐。
 ///
-/// Provider 在首次读取时立即预热，并在本次进程内保留最后成功结果。普通刷新采用
-/// stale-while-revalidate；确认 storefront 变化后则撤下旧价格，避免展示错误币种。
+/// Provider 在本次进程内保留最后成功结果，刷新由页面显式触发。
 final subscriptionPlansProvider =
     NotifierProvider<
       SubscriptionPlansController,
@@ -58,10 +57,7 @@ class PaddleSubscriptionPlansController
   Future<void> get settled => _settled;
 
   @override
-  AsyncValue<List<SubscriptionPlan>> build() {
-    _settled = Future<void>.microtask(() => _refresh(force: false));
-    return const AsyncLoading();
-  }
+  AsyncValue<List<SubscriptionPlan>> build() => const AsyncLoading();
 
   Future<void> refresh({bool force = false}) {
     final operation = _refresh(force: force);
@@ -69,22 +65,46 @@ class PaddleSubscriptionPlansController
     return operation;
   }
 
+  /// 先发布可用缓存，再执行网络刷新；只有没有任何可展示价格时才进入 loading。
   Future<void> _refresh({required bool force}) async {
     final generation = ++_generation;
     final previousPlans = state.valueOrNull;
-    if (previousPlans == null) state = const AsyncLoading();
+    final repository = ref.read(paddleBillingRepositoryProvider);
+    var hasDisplayablePlans = previousPlans != null;
     AppLogger.log(
       'Subscription',
       'Paddle plans 刷新开始: generation=$generation force=$force',
     );
+
     try {
-      final plans = await ref
-          .read(paddleBillingRepositoryProvider)
-          .fetchPlans(force: force);
+      if (!hasDisplayablePlans) {
+        final cachedPlans = await repository.loadCachedPlans();
+        if (generation != _generation) {
+          AppLogger.log(
+            'Subscription',
+            'Paddle plans 缓存加载丢弃: generation=$generation '
+                'reason=outdated',
+          );
+          return;
+        }
+        if (cachedPlans != null) {
+          state = AsyncData(cachedPlans);
+          hasDisplayablePlans = true;
+          AppLogger.log(
+            'Subscription',
+            'Paddle plans 缓存已发布: generation=$generation '
+                'count=${cachedPlans.length}',
+          );
+        }
+      }
+
+      if (!hasDisplayablePlans) state = const AsyncLoading();
+
+      final plans = await repository.fetchPlans(force: force);
       if (generation != _generation) {
         AppLogger.log(
           'Subscription',
-          'Paddle plans 刷新丢弃: generation=$generation reason=outdated',
+          'Paddle plans 刷新结果丢弃: generation=$generation reason=outdated',
         );
         return;
       }
@@ -96,9 +116,11 @@ class PaddleSubscriptionPlansController
       );
     } catch (error, stackTrace) {
       if (generation != _generation) return;
-      if (previousPlans != null) {
-        state = AsyncData(previousPlans);
-        AppLogger.log('Subscription', 'Paddle plans 刷新失败，保留会话缓存: $error');
+      final retainedPlans = state.valueOrNull ?? previousPlans;
+      if (retainedPlans != null) {
+        state = AsyncData(retainedPlans);
+        AppLogger.log('Subscription', 'Paddle plans 后台刷新失败，保留已有价格: $error');
+        AppLogger.log('Subscription', stackTrace.toString());
       } else {
         state = AsyncError(error, stackTrace);
         AppLogger.log(
