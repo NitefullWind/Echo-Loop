@@ -447,14 +447,6 @@ class _DictionaryPanelState extends ConsumerState<DictionaryPanel> {
       );
     });
 
-    // 词典内任一 TTS（标题或例句）开始时停止本地 Opus，避免两套短音频重叠。
-    ref.listen<String?>(
-      ttsControllerProvider.select((ttsState) => ttsState.speakingKey),
-      (previous, next) {
-        if (next != null) _textPlaybackController?.stop();
-      },
-    );
-
     final isWeb = _isWebSource(state.selectedSourceId);
     // AI 与网页源内容丰富，默认 3/5 屏高且可上拉放大；本地源内容短，按内容自适应。
     final isResizable =

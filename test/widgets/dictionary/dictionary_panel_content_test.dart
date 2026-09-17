@@ -18,6 +18,7 @@ import 'package:echo_loop/utils/saved_text_index.dart';
 import 'package:echo_loop/services/dictionary_service.dart';
 import 'package:echo_loop/theme/app_theme.dart';
 import 'package:echo_loop/widgets/dictionary/dictionary_panel_host.dart';
+import 'package:echo_loop/widgets/tts/speak_button.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqlite3/sqlite3.dart';
 
@@ -33,6 +34,7 @@ final List<String> _autoSpeakCalls = [];
 String? _initialSpeakingKey;
 int _ttsStopCalls = 0;
 int _textPlaybackStopCalls = 0;
+bool _forwardTextPlaybackToTts = false;
 
 /// 桩 [TtsController]：弹窗内嵌发音按钮、查词完成会自动触发例句预热，
 /// 真实控制器会经平台 TTS 引擎/method channel 异步合成，在 widget 测试中
@@ -43,7 +45,10 @@ class _StubTtsController extends TtsController {
   TtsControllerState build() =>
       TtsControllerState(speakingKey: _initialSpeakingKey);
   @override
-  Future<void> speak(String text, {String? key}) async {}
+  Future<void> speak(String text, {String? key}) async {
+    state = TtsControllerState(speakingKey: key ?? text);
+  }
+
   @override
   Future<void> prewarmTexts(List<String> texts) async {
     _prewarmCalls.add(texts);
@@ -71,6 +76,9 @@ class _StubTextPlaybackController extends TextPlaybackController {
   Future<void> speak(String text, {String? key}) async {
     _autoSpeakCalls.add(text);
     state = TextPlaybackState(playingKey: key ?? text);
+    if (_forwardTextPlaybackToTts) {
+      await ref.read(ttsControllerProvider.notifier).speak(text, key: key);
+    }
   }
 
   @override
@@ -181,6 +189,7 @@ void main() {
     _initialSpeakingKey = null;
     _ttsStopCalls = 0;
     _textPlaybackStopCalls = 0;
+    _forwardTextPlaybackToTts = false;
     db = _createTestDb();
     oldInstance = DictionaryService.replaceInstance(
       DictionaryService.withDatabase(db),
@@ -219,6 +228,20 @@ void main() {
       await tester.tap(find.byKey(const Key('dict_panel_close')));
 
       expect(_textPlaybackStopCalls, greaterThan(0));
+    });
+
+    testWidgets('TTS 开始时不会被词典面板监听器再次停止', (tester) async {
+      await _prefs.setString(
+        'dictionary_settings',
+        '{"autoSpeakOnLookup":false}',
+      );
+      _forwardTextPlaybackToTts = true;
+      await _openSheet(tester, 'run');
+
+      await tester.tap(find.byType(SpeakButton));
+      await tester.pump();
+
+      expect(_textPlaybackStopCalls, 0, reason: 'TTS 状态变化不应反向停止发起它的文本播放控制器');
     });
 
     testWidgets('显示完整词典内容（音标、释义、星级、标签）', (tester) async {
