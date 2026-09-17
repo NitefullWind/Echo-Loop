@@ -122,6 +122,7 @@ dependencies:
   lottie: ^3.3.3
   # 持久化文件日志：使用成熟的大小轮转输出，避免手写截断逻辑。
   logger: ^2.7.0
+  window_manager: ^0.5.2
 
 dev_dependencies:
   flutter_test:

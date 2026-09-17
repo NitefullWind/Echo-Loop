@@ -9,6 +9,7 @@ import 'app_logger.dart';
 
 typedef AppDeepLinkMatcher = bool Function(Uri uri);
 typedef AppDeepLinkHandler = Future<void> Function(Uri uri);
+typedef AppDeepLinkBeforeDispatch = Future<void> Function();
 
 /// 一个业务 Deep Link 路由。
 class AppDeepLinkRoute {
@@ -36,19 +37,27 @@ class AppDeepLinkRouter {
   AppDeepLinkRouter({
     required Stream<Uri> uriStream,
     required List<AppDeepLinkRoute> routes,
+    AppDeepLinkBeforeDispatch? beforeDispatch,
   }) : _uriStream = uriStream,
-       _routes = List.unmodifiable(routes);
+       _routes = List.unmodifiable(routes),
+       _beforeDispatch = beforeDispatch;
 
   /// 使用当前平台的 app_links 创建统一路由器。
   factory AppDeepLinkRouter.forCurrentPlatform({
     required List<AppDeepLinkRoute> routes,
+    AppDeepLinkBeforeDispatch? beforeDispatch,
   }) {
     final appLinks = AppLinks();
-    return AppDeepLinkRouter(uriStream: appLinks.uriLinkStream, routes: routes);
+    return AppDeepLinkRouter(
+      uriStream: appLinks.uriLinkStream,
+      routes: routes,
+      beforeDispatch: beforeDispatch,
+    );
   }
 
   final Stream<Uri> _uriStream;
   final List<AppDeepLinkRoute> _routes;
+  final AppDeepLinkBeforeDispatch? _beforeDispatch;
 
   StreamSubscription<Uri>? _uriSubscription;
   Future<void> _dispatchTail = Future<void>.value();
@@ -109,6 +118,18 @@ class AppDeepLinkRouter {
         'URI matched route: route=${route.name} '
             'scheme=${uri.scheme} host=${uri.host} path=${uri.path}',
       );
+      final beforeDispatch = _beforeDispatch;
+      if (beforeDispatch != null) {
+        try {
+          await beforeDispatch();
+        } catch (error, stackTrace) {
+          AppLogger.log(
+            'AppDeepLink',
+            'Before-dispatch hook failed: route=${route.name} '
+                'error=$error stack=$stackTrace',
+          );
+        }
+      }
       try {
         await route.onMatch(uri);
       } catch (error, stackTrace) {

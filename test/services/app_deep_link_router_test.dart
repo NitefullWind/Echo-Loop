@@ -58,6 +58,47 @@ void main() {
     await links.close();
   });
 
+  test('runs before-dispatch hook before a matched route only', () async {
+    final events = <String>[];
+    final router = AppDeepLinkRouter(
+      uriStream: const Stream<Uri>.empty(),
+      beforeDispatch: () async => events.add('activate'),
+      routes: [
+        AppDeepLinkRoute(
+          name: 'echo-loop',
+          matches: (uri) => uri.host == 'matched',
+          onMatch: (uri) async => events.add('handle'),
+        ),
+      ],
+    );
+
+    await router.handleUri(Uri.parse('echo-loop://ignored'));
+    await router.handleUri(Uri.parse('echo-loop://matched'));
+
+    expect(events, ['activate', 'handle']);
+    await router.dispose();
+  });
+
+  test('continues route dispatch when before-dispatch hook fails', () async {
+    var handled = false;
+    final router = AppDeepLinkRouter(
+      uriStream: const Stream<Uri>.empty(),
+      beforeDispatch: () async => throw StateError('activation failed'),
+      routes: [
+        AppDeepLinkRoute(
+          name: 'echo-loop',
+          matches: (uri) => uri.scheme == 'echo-loop',
+          onMatch: (uri) async => handled = true,
+        ),
+      ],
+    );
+
+    await router.handleUri(Uri.parse('echo-loop://paddle-success'));
+
+    expect(handled, isTrue);
+    await router.dispose();
+  });
+
   test('starts only one subscription and stops after dispose', () async {
     var listenCalls = 0;
     final links = StreamController<Uri>.broadcast(

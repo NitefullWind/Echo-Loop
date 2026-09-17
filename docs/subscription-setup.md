@@ -98,6 +98,9 @@ Checkout 完成后，Paddle 通过 `echo-loop://paddle-success` 把用户带回 
 `/api/entitlements` 强制回源确认权益。不要根据 URL 参数或回跳本身直接解锁，
 最终状态以服务端 webhook 和权益接口为准。
 
+桌面端收到回跳时，应用会通过 `window_manager` 恢复、显示并聚焦主窗口；iOS 和
+Android 的前台唤醒由系统负责。窗口激活失败不会阻断 Deep Link 的权益刷新流程。
+
 构建时注入：
 
 ```

@@ -35,6 +35,7 @@ import 'providers/difficult_practice_prefs_provider.dart';
 import 'providers/new_user_guide_provider.dart';
 import 'services/app_logger.dart';
 import 'services/app_deep_link_router.dart';
+import 'services/app_window_service.dart';
 import 'services/startup_trace.dart';
 import 'services/app_update_migration.dart';
 import 'services/media_kit_debug_initializer.dart';
@@ -58,6 +59,8 @@ void main() async {
   startupTrace.mark('dart_main_enter');
   WidgetsFlutterBinding.ensureInitialized();
   startupTrace.mark('flutter_binding_ready');
+  final appWindowActivator = WindowManagerAppWindowActivator();
+  await appWindowActivator.initialize();
   startupTrace.runSync('timeago_initialize', initTimeago);
 
   final packageInfo = await startupTrace.run(
@@ -189,7 +192,7 @@ void main() async {
           initialRemoteConfigProvider.overrideWithValue(initialRemoteConfig),
           startupDemoModeProvider.overrideWithValue(isDemoMode),
         ],
-        child: const EchoLoopApp(),
+        child: EchoLoopApp(windowActivator: appWindowActivator),
       ),
     ),
   );
@@ -213,7 +216,9 @@ Future<void> _registerAnonymousIdWhenReady(
 }
 
 class EchoLoopApp extends ConsumerStatefulWidget {
-  const EchoLoopApp({super.key});
+  const EchoLoopApp({super.key, this.windowActivator});
+
+  final AppWindowActivator? windowActivator;
 
   @override
   ConsumerState<EchoLoopApp> createState() => _EchoLoopAppState();
@@ -253,6 +258,8 @@ class _EchoLoopAppState extends ConsumerState<EchoLoopApp>
         );
 
     WidgetsBinding.instance.addObserver(this);
+    final windowActivator =
+        widget.windowActivator ?? WindowManagerAppWindowActivator();
 
     final paddleDeepLinkHandler = PaddleDeepLinkHandler(
       refreshEntitlements: () async {
@@ -265,6 +272,7 @@ class _EchoLoopAppState extends ConsumerState<EchoLoopApp>
     );
     final appDeepLinkRouter = AppDeepLinkRouter.forCurrentPlatform(
       routes: [paddleDeepLinkHandler.route],
+      beforeDispatch: windowActivator.activate,
     );
     _appDeepLinkRouter = appDeepLinkRouter;
     unawaited(appDeepLinkRouter.start());
