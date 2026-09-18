@@ -286,10 +286,18 @@ void main() {
         find.textContaining('Full feed description. More', findRichText: true),
         findsOneWidget,
       );
-
-      await tester.tap(
-        find.byKey(const ValueKey('podcast-feed-summary-inline-more')),
+      final summaryFinder = find.byKey(
+        const ValueKey('podcast-feed-summary-inline-more'),
       );
+      final summary = tester.widget<Text>(summaryFinder);
+      final summaryContext = tester.element(summaryFinder);
+      expect(
+        summary.style?.fontSize,
+        Theme.of(summaryContext).textTheme.bodyMedium?.fontSize,
+      );
+      expect(summary.maxLines, 4);
+
+      await tester.tap(summaryFinder);
       await tester.pumpAndSettle();
 
       // 详情弹窗展示 feed 的作者与完整简介。

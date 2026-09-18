@@ -1,7 +1,7 @@
 /// Podcast feed 摘要头部。
 ///
 /// 搜索预览页和已订阅 Podcast 合集详情页共用同一套紧凑展示：左侧封面，
-/// 右侧最多 3 行简介，并把「更多」内联放在最后一行末尾。
+/// 右侧最多 4 行简介，并把「更多」内联放在最后一行末尾。
 library;
 
 import 'package:flutter/material.dart';
@@ -69,14 +69,15 @@ class _InlineMoreDescription extends StatelessWidget {
     required this.moreLabel,
   });
 
-  static const int _maxLines = 3;
+  static const int _maxLines = 4;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final descriptionStyle = theme.textTheme.bodyLarge?.copyWith(
+    // 摘要是辅助信息，使用正文级字号，避免在窄屏时压过播客标题层级。
+    final descriptionStyle = theme.textTheme.bodyMedium?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
-      height: 1.25,
+      height: 1.3,
     );
     final moreStyle = theme.textTheme.labelLarge?.copyWith(
       color: theme.colorScheme.primary,

@@ -99,7 +99,7 @@ void main() {
     // 标题由 AppBar 承载，header 不再重复展示；作者也不在 header
     expect(find.text('Learning Podcast'), findsWidgets);
     expect(find.text('Echo Studio'), findsNothing);
-    // header 仅保留封面 + 3 行简介预览 + 内联更多，不完整铺开长简介
+    // header 仅保留封面 + 4 行简介预览 + 内联更多，不完整铺开长简介
     expect(find.text(longDescription), findsNothing);
     expect(
       find.byKey(const ValueKey('podcast-feed-summary-inline-more')),
