@@ -56,6 +56,7 @@ void main() {
   setUp(() {
     dao = MockCacheDao();
     api = MockApiClient();
+    when(() => api.usesExternalProvider).thenReturn(false);
     source = AiDictionarySource(cacheDao: () => dao, apiClient: () => api);
   });
 

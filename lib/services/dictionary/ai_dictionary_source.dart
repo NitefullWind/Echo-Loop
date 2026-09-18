@@ -76,11 +76,15 @@ class AiDictionarySource implements DictionarySource {
   }) async* {
     final token = request.accessToken;
     final language = request.targetLanguage ?? _defaultLanguage;
+    final apiClient = _apiClient();
     // request.word 保留大小写进入后端 prompt；缓存键用小写词形，
     // 确保 NASA/nasa 复用同一 L1/L2/L3 缓存。
     final word = request.word;
     final cacheWord = normalizeWord(word);
-    final key = hashText('$cacheWord|$language');
+    final cacheNamespace = apiClient.usesExternalProvider
+        ? '|${apiClient.cacheNamespace}'
+        : '';
+    final key = hashText('$cacheWord|$language$cacheNamespace');
     // 单词 / 词组是两条独立功能，类型仅由查询是否含空白决定（同后端 resolveQueryType）；
     // 缓存读取与端点路由都据此选择具体模型，不靠 originalExpression 结构嗅探。
     final isPhrase = cacheWord.contains(' ');
@@ -111,23 +115,22 @@ class AiDictionarySource implements DictionarySource {
       }
     }
 
-    // L3 网络请求需要登录；缓存读取不受登录状态限制。
-    if (token == null || token.isEmpty) {
+    // L3 网络请求在 Echo Loop 模式需要登录；用户自己的模型只使用其 API Key。
+    if (!apiClient.usesExternalProvider && (token == null || token.isEmpty)) {
       throw const DictionaryAuthRequiredException();
     }
 
     // L3 流式 API：按 isPhrase 分流到单词/词组端点
-    final apiClient = _apiClient();
     final stream = isPhrase
         ? apiClient.lookupPhraseStreamFrames(
             word,
-            accessToken: token,
+            accessToken: token ?? '',
             targetLanguage: language,
             cancelToken: cancelToken,
           )
         : apiClient.lookupWordStreamFrames(
             word,
-            accessToken: token,
+            accessToken: token ?? '',
             targetLanguage: language,
             cancelToken: cancelToken,
           );
@@ -145,6 +148,8 @@ class AiDictionarySource implements DictionarySource {
       throw const DictionaryStreamException();
     }
     if (last != null && sawFinal) {
+      final cancellation = cancelToken?.cancelError;
+      if (cancellation != null) throw cancellation;
       _memCache[key] = last;
       await cacheDao.upsert(key, _cacheType, jsonEncode(last.toJson()));
     }

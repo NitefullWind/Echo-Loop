@@ -47,7 +47,10 @@ import '../helpers/mock_providers.dart';
 
 class _MockCacheDao extends Mock implements SentenceAiCacheDao {}
 
-class _MockApiClient extends Mock implements SentenceAiApiClient {}
+class _MockApiClient extends Mock implements SentenceAiApiClient {
+  @override
+  bool get usesExternalProvider => false;
+}
 
 class _MockNotificationPermissionService extends Mock
     implements NotificationPermissionService {}

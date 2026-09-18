@@ -12,6 +12,16 @@ import 'chatbot_widget_harness.dart';
 
 void main() {
   group('shouldShowAiChatAssistantEntry', () {
+    test('外部模型已配置时不依赖内部服务开关', () {
+      expect(
+        shouldShowAiChatAssistantEntry(
+          chatbotEnabled: false,
+          remoteEnabled: false,
+          externalProviderConfigured: true,
+        ),
+        true,
+      );
+    });
     test('编译期开关和远程开关都开启时显示入口', () {
       expect(
         shouldShowAiChatAssistantEntry(

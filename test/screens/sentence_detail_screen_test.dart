@@ -17,7 +17,10 @@ import 'package:mocktail/mocktail.dart';
 import '../helpers/mock_providers.dart';
 import '../helpers/test_app.dart';
 
-class _MockSentenceAiApiClient extends Mock implements SentenceAiApiClient {}
+class _MockSentenceAiApiClient extends Mock implements SentenceAiApiClient {
+  @override
+  bool get usesExternalProvider => false;
+}
 
 class _RecordingRangePlayback implements SenseGroupRangePlayback {
   Duration? start;

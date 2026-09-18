@@ -98,6 +98,108 @@ abstract class AppLocalizations {
     Locale('zh'),
   ];
 
+  /// No description provided for @externalAiTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'External AI'**
+  String get externalAiTitle;
+
+  /// No description provided for @externalAiDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Translations, analysis, sense groups, AI dictionary, and chat will use your model service.'**
+  String get externalAiDescription;
+
+  /// No description provided for @externalAiProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Provider'**
+  String get externalAiProvider;
+
+  /// No description provided for @externalAiBaseUrl.
+  ///
+  /// In en, this message translates to:
+  /// **'Base URL'**
+  String get externalAiBaseUrl;
+
+  /// No description provided for @externalAiModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Model'**
+  String get externalAiModel;
+
+  /// No description provided for @externalAiApiKey.
+  ///
+  /// In en, this message translates to:
+  /// **'API Key'**
+  String get externalAiApiKey;
+
+  /// No description provided for @externalAiApiKeyHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave empty to keep the saved key'**
+  String get externalAiApiKeyHint;
+
+  /// No description provided for @externalAiApiKeyStorage.
+  ///
+  /// In en, this message translates to:
+  /// **'The API key is stored only in this device’s secure storage.'**
+  String get externalAiApiKeyStorage;
+
+  /// No description provided for @externalAiPrivacy.
+  ///
+  /// In en, this message translates to:
+  /// **'Sentences, context and chat messages are sent to your provider and billed by API usage. A ChatGPT subscription does not include API credits.'**
+  String get externalAiPrivacy;
+
+  /// No description provided for @externalAiLimitations.
+  ///
+  /// In en, this message translates to:
+  /// **'Cloud transcription still uses Echo Loop. Switch back to Echo Loop for retell audio evaluation; this deletes the saved API key.'**
+  String get externalAiLimitations;
+
+  /// No description provided for @externalAiLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'AI settings could not be loaded. Requests are paused. Retry or save a new configuration.'**
+  String get externalAiLoadFailed;
+
+  /// No description provided for @externalAiSaveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save AI settings. Check secure storage and retry.'**
+  String get externalAiSaveFailed;
+
+  /// No description provided for @externalAiSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'External AI settings saved'**
+  String get externalAiSaved;
+
+  /// No description provided for @externalAiShow.
+  ///
+  /// In en, this message translates to:
+  /// **'Show key'**
+  String get externalAiShow;
+
+  /// No description provided for @externalAiHide.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide key'**
+  String get externalAiHide;
+
+  /// No description provided for @externalAiCustom.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom compatible service'**
+  String get externalAiCustom;
+
+  /// No description provided for @externalAiInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid HTTP(S) Base URL, model and API key. Enter a new key when changing providers or addresses.'**
+  String get externalAiInvalid;
+
   /// No description provided for @startupLocalDataErrorTitle.
   ///
   /// In en, this message translates to:

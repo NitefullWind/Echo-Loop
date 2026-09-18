@@ -38,7 +38,10 @@ import 'package:echo_loop/widgets/common/bookmark_toggle_row.dart';
 
 import '../helpers/mock_providers.dart';
 
-class _MockApiClient extends Mock implements SentenceAiApiClient {}
+class _MockApiClient extends Mock implements SentenceAiApiClient {
+  @override
+  bool get usesExternalProvider => false;
+}
 
 class _MockAudioItemDao extends Mock implements AudioItemDao {}
 
@@ -481,11 +484,7 @@ void main() {
       );
       expect(
         tester.getTopRight(find.byType(BookmarkToggleRow)).dx,
-        closeTo(
-          tester.getSize(find.byType(Scaffold)).width -
-              AppSpacing.m,
-          1,
-        ),
+        closeTo(tester.getSize(find.byType(Scaffold)).width - AppSpacing.m, 1),
       );
     });
 

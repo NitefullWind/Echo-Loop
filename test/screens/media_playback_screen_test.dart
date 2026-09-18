@@ -34,7 +34,10 @@ import '../helpers/mock_providers.dart';
 import '../helpers/shared/fake_media_player_backend.dart';
 import '../helpers/test_app.dart';
 
-class _MockApiClient extends Mock implements SentenceAiApiClient {}
+class _MockApiClient extends Mock implements SentenceAiApiClient {
+  @override
+  bool get usesExternalProvider => false;
+}
 
 void main() {
   late FakeMediaPlayerBackend backend;

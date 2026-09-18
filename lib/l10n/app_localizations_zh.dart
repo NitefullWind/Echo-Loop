@@ -9,6 +9,60 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
+  String get externalAiTitle => '外部 AI 服务';
+
+  @override
+  String get externalAiDescription => '配置后，翻译、解析、意群、AI 词典和聊天会直接使用你的模型服务。';
+
+  @override
+  String get externalAiProvider => '服务商';
+
+  @override
+  String get externalAiBaseUrl => 'Base URL';
+
+  @override
+  String get externalAiModel => '模型名称';
+
+  @override
+  String get externalAiApiKey => 'API Key';
+
+  @override
+  String get externalAiApiKeyHint => '留空则保留已保存的 Key';
+
+  @override
+  String get externalAiApiKeyStorage => 'API Key 只保存在本机系统安全存储中。';
+
+  @override
+  String get externalAiPrivacy =>
+      '学习句子、上下文和聊天内容会发送给所选服务商，费用由该服务商按 API 用量收取。ChatGPT 会员不包含 API 额度。';
+
+  @override
+  String get externalAiLimitations =>
+      '云端转录继续使用 Echo Loop 服务；复述音频评估需先切回 Echo Loop。切回会删除已保存的 Key。';
+
+  @override
+  String get externalAiLoadFailed => '无法读取 AI 配置，AI 请求已暂停。请重试或重新保存配置。';
+
+  @override
+  String get externalAiSaveFailed => '无法保存 AI 配置，请检查系统安全存储后重试。';
+
+  @override
+  String get externalAiSaved => '外部 AI 设置已保存';
+
+  @override
+  String get externalAiShow => '显示 Key';
+
+  @override
+  String get externalAiHide => '隐藏 Key';
+
+  @override
+  String get externalAiCustom => '自定义兼容服务';
+
+  @override
+  String get externalAiInvalid =>
+      '请输入有效的 HTTP(S) Base URL、模型名称和 API Key。更换服务地址时需要重新输入 Key。';
+
+  @override
   String get startupLocalDataErrorTitle => '无法准备本地学习数据';
 
   @override

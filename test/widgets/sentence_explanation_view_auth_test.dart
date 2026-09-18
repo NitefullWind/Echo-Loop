@@ -29,6 +29,7 @@ import 'package:echo_loop/models/sentence_ai_result.dart';
 import 'package:echo_loop/providers/audio_sentences_provider.dart';
 import 'package:echo_loop/providers/audio_engine/audio_engine_provider.dart';
 import 'package:echo_loop/providers/sentence_ai_provider.dart';
+import 'package:echo_loop/providers/external_ai_settings_provider.dart';
 import 'package:echo_loop/router/app_router.dart';
 import 'package:echo_loop/services/sentence_ai_api_client.dart';
 import 'package:echo_loop/widgets/practice/sentence_annotation_card.dart';
@@ -178,6 +179,14 @@ class _TwoGroupSentenceAiNotifier extends _RecordingSentenceAiNotifier {
 class _UnusedDio extends MockDio {}
 
 class _MockCacheDao extends Mock implements SentenceAiCacheDao {}
+
+class _MemoryAiSettingsStore extends ExternalAiSettingsStore {
+  @override
+  Future<ExternalAiSettings> load() async => const ExternalAiSettings();
+
+  @override
+  Future<void> save(ExternalAiSettings settings) async {}
+}
 
 class _MockSavedSenseGroupDao extends Mock implements SavedSenseGroupDao {}
 
@@ -354,6 +363,52 @@ void main() {
     );
     await tester.pump();
   }
+
+  testWidgets('切换 AI 服务清除手动生成的内容并允许未登录重新生成', (tester) async {
+    final cacheDao = _MockCacheDao();
+    final savedSenseGroupDao = _MockSavedSenseGroupDao();
+    when(() => cacheDao.getByHash(any(), any())).thenAnswer((_) async => null);
+    when(
+      savedSenseGroupDao.watchSavedPhraseTexts,
+    ).thenAnswer((_) => Stream<Set<String>>.value(const {}));
+    final ai = _RecordingSentenceAiNotifier(
+      cacheDao: cacheDao,
+      apiClient: _NoopSentenceAiApiClient(),
+    );
+    await pumpAuthTestApp(
+      tester,
+      cacheDao: cacheDao,
+      savedSenseGroupDao: savedSenseGroupDao,
+      aiNotifier: ai,
+      autoShowAiExplanation: false,
+      extraOverrides: [
+        externalAiSettingsStoreProvider.overrideWithValue(
+          _MemoryAiSettingsStore(),
+        ),
+      ],
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('translation')));
+    await tester.pumpAndSettle();
+    expect(find.text('cached-chain translation'), findsOneWidget);
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(SentenceExplanationView)),
+    );
+    await container
+        .read(externalAiSettingsProvider.notifier)
+        .save(
+          provider: ExternalAiProvider.custom,
+          baseUrl: 'https://example.com/v1',
+          model: 'model',
+          apiKey: 'key',
+        );
+    await tester.pumpAndSettle();
+    expect(find.text('cached-chain translation'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('translation')));
+    await tester.pumpAndSettle();
+    expect(ai.translationRequests, hasLength(2));
+    expect(find.text('cached-chain translation'), findsOneWidget);
+  });
 
   testWidgets('默认布局讲解工具栏与正文位于同一滚动区', (tester) async {
     final cacheDao = _MockCacheDao();

@@ -62,6 +62,7 @@ void main() {
   setUp(() {
     mockDao = MockCacheDao();
     mockApi = MockApiClient();
+    when(() => mockApi.usesExternalProvider).thenReturn(false);
     notifier = SentenceAiNotifier(cacheDao: mockDao, apiClient: mockApi);
   });
 
@@ -719,6 +720,7 @@ void main() {
 
       reset(mockDao);
       reset(mockApi);
+      when(() => mockApi.usesExternalProvider).thenReturn(false);
 
       // 第二次：L1 命中，不查 DB 也不调 API
       final result = await notifier

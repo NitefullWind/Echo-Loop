@@ -28,6 +28,11 @@ import '../models/sentence_ai_result.dart';
 import '../models/sense_group_result.dart';
 import '../models/retell_review_evaluation.dart';
 import '../models/dictionary/dictionary_entry.dart';
+import '../models/external_ai_config.dart';
+import '../providers/external_ai_settings_provider.dart';
+import 'openai_compatible_ai_client.dart';
+import 'external_ai_prompts.dart';
+import '../utils/sense_group_validate.dart';
 
 part 'sentence_ai_api_client.g.dart';
 
@@ -105,10 +110,22 @@ class SenseGroupsStreamException implements Exception {
   String toString() => 'SenseGroupsStreamException';
 }
 
+/// 当前外部文本模型不支持需要音频上传的功能。
+class ExternalAiFeatureUnsupportedException implements Exception {
+  final String feature;
+
+  const ExternalAiFeatureUnsupportedException(this.feature);
+
+  @override
+  String toString() => 'ExternalAiFeatureUnsupportedException: $feature';
+}
+
 /// AI 句子翻译/解析 API 客户端
 class SentenceAiApiClient {
   final Dio _dio;
   final void Function(String message) _streamLogPrint;
+  final OpenAiCompatibleAiClient? _externalClient;
+  final String? _configurationError;
 
   /// [appVersion] 随请求以 `x-app-version` 上报（版本灰度预留），可为 null。
   /// 平台与渠道标识会随请求携带，后端据此按组合决定是否限额。
@@ -117,8 +134,14 @@ class SentenceAiApiClient {
     String? appVersion,
     SupabaseTokenCoordinator? tokenCoordinator,
     bool http2Enabled = aiHttp2EnabledByDefault,
+    ExternalAiConfig? externalConfig,
+    String? configurationError,
     void Function(String message)? streamLogPrint,
-  }) : _dio = createAuthenticatedBackendDio(
+  }) : _configurationError = configurationError,
+       _externalClient = externalConfig == null
+           ? null
+           : OpenAiCompatibleAiClient(externalConfig),
+       _dio = createAuthenticatedBackendDio(
          tokenCoordinator: tokenCoordinator,
          baseUrl: baseUrl,
          appVersion: appVersion,
@@ -145,8 +168,33 @@ class SentenceAiApiClient {
   SentenceAiApiClient.withDio(
     this._dio, {
     void Function(String message)? streamLogPrint,
-  }) : _streamLogPrint =
+    OpenAiCompatibleAiClient? externalClient,
+  }) : _configurationError = null,
+       _externalClient = externalClient,
+       _streamLogPrint =
            streamLogPrint ?? ((message) => AppLogger.log('AI-API', message));
+
+  /// 仅供测试：注入外部模型客户端，验证句子层的 JSON 适配逻辑。
+  @visibleForTesting
+  SentenceAiApiClient.withExternalClient(
+    OpenAiCompatibleAiClient externalClient, {
+    void Function(String message)? streamLogPrint,
+  }) : _configurationError = null,
+       _dio = Dio(),
+       _externalClient = externalClient,
+       _streamLogPrint =
+           streamLogPrint ?? ((message) => AppLogger.log('AI-API', message));
+
+  /// 当前是否绕过 Echo Loop 后端，直接请求用户配置的模型服务。
+  bool get usesExternalProvider =>
+      _externalClient != null || _configurationError != null;
+
+  /// 缓存隔离命名空间，避免切换模型后复用另一服务生成的结果。
+  String get cacheNamespace {
+    final config = _externalClient?.config;
+    if (config == null) return 'echo-loop';
+    return 'external:${config.providerLabel}:${config.normalizedBaseUrl}:${config.model}';
+  }
 
   /// 请求公共 headers（仅测试用，验证平台/版本标识已随请求携带）。
   @visibleForTesting
@@ -170,6 +218,33 @@ class SentenceAiApiClient {
     String? targetLanguage,
     CancelToken? cancelToken,
   }) async* {
+    _ensureConfigurationReady();
+    final externalClient = _externalClient;
+    if (externalClient != null) {
+      final result = await externalClient.completeJson(
+        systemPrompt:
+            'You translate English sentences for language learners. '
+            'Return only a JSON object with a single string field named '
+            '"translation". Translate into ${targetLanguage ?? 'the learner language'}.',
+        userPrompt: jsonEncode({
+          'sentence': text,
+          if (previousText != null) 'previous': previousText,
+          if (nextText != null) 'next': nextText,
+        }),
+        cancelToken: cancelToken,
+      );
+      final translation = SentenceTranslation.fromJson(result);
+      if (translation.translation.trim().isEmpty) {
+        throw const ExternalAiResponseException(
+          'The model returned no translation.',
+        );
+      }
+      yield SentenceTranslationStreamFrame(
+        translation: translation,
+        isFinal: true,
+      );
+      return;
+    }
     final response = await _dio.post<ResponseBody>(
       '/api/v1/stream/translate',
       data: {
@@ -246,6 +321,30 @@ class SentenceAiApiClient {
     String? targetLanguage,
     CancelToken? cancelToken,
   }) async* {
+    _ensureConfigurationReady();
+    final externalClient = _externalClient;
+    if (externalClient != null) {
+      final result = await externalClient.completeJson(
+        systemPrompt:
+            'You analyze English sentences for learners. Return only a JSON '
+            'object with grammar, vocabulary, and listening arrays. Each '
+            'grammar item has point and note; vocabulary has term and note; '
+            'listening has phrase and note. Write notes in ${targetLanguage ?? 'the learner language'}.',
+        userPrompt: jsonEncode({
+          'sentence': text,
+          if (targetLanguage != null) 'targetLanguage': targetLanguage,
+        }),
+        cancelToken: cancelToken,
+      );
+      final analysis = SentenceAnalysis.fromJson(result);
+      if (analysis.isEmpty) {
+        throw const ExternalAiResponseException(
+          'The model returned no sentence analysis.',
+        );
+      }
+      yield SentenceAnalysisStreamFrame(analysis: analysis, isFinal: true);
+      return;
+    }
     final response = await _dio.post<ResponseBody>(
       '/api/v1/stream/analyze',
       data: {
@@ -387,6 +486,27 @@ class SentenceAiApiClient {
     String? targetLanguage,
     CancelToken? cancelToken,
   }) async* {
+    _ensureConfigurationReady();
+    final externalClient = _externalClient;
+    if (externalClient != null) {
+      final isWord = path.endsWith('lookup-word');
+      final result = await externalClient.completeJson(
+        systemPrompt: isWord ? externalWordPrompt : externalPhrasePrompt,
+        userPrompt: jsonEncode({
+          'query': query,
+          if (targetLanguage != null) 'targetLanguage': targetLanguage,
+        }),
+        cancelToken: cancelToken,
+      );
+      final entry = fromJson(result);
+      if (entry.headword.isEmpty || entry.isEmpty) {
+        throw const ExternalAiResponseException(
+          'The model returned no dictionary entry.',
+        );
+      }
+      yield AiDictionaryStreamFrame(entry: entry, isFinal: true);
+      return;
+    }
     final response = await _dio.post<ResponseBody>(
       path,
       data: {
@@ -487,6 +607,38 @@ class SentenceAiApiClient {
     required String accessToken,
     CancelToken? cancelToken,
   }) async* {
+    _ensureConfigurationReady();
+    final externalClient = _externalClient;
+    if (externalClient != null) {
+      final result = await externalClient.completeJson(
+        systemPrompt:
+            'Split the English sentence into natural medium and fine sense groups. '
+            'Return only JSON with two string arrays named medium and fine. '
+            'Every group must be an exact consecutive substring of the sentence. '
+            'Each array must cover the entire sentence in order, preserving all words and punctuation.',
+        userPrompt: jsonEncode({'sentence': text}),
+        cancelToken: cancelToken,
+      );
+      final medium = result['medium'];
+      final fine = result['fine'];
+      if (medium is! List ||
+          fine is! List ||
+          medium.any((item) => item is! String) ||
+          fine.any((item) => item is! String)) {
+        throw const ExternalAiResponseException(
+          'Invalid sense group response.',
+        );
+      }
+      final groups = SenseGroupResult.fromJson(result);
+      if (!validateSenseGroupChunks(groups.medium, text) ||
+          !validateSenseGroupChunks(groups.fine, text)) {
+        throw const ExternalAiResponseException(
+          'Sense groups do not match the original sentence.',
+        );
+      }
+      yield SenseGroupsStreamFrame(result: groups, isFinal: true);
+      return;
+    }
     final response = await _dio.post<ResponseBody>(
       '/api/v1/stream/sense-groups',
       data: {'text': text},
@@ -554,6 +706,10 @@ class SentenceAiApiClient {
     required String accessToken,
     CancelToken? cancelToken,
   }) async* {
+    if (_externalClient != null) {
+      throw const ExternalAiFeatureUnsupportedException('evaluateReview');
+    }
+
     final response = await _dio.post<ResponseBody>(
       '/api/v1/stream/evaluate-review',
       data: FormData.fromMap({
@@ -633,7 +789,16 @@ class SentenceAiApiClient {
   }
 
   /// 释放资源
-  void dispose() => _dio.close();
+  void dispose() {
+    _externalClient?.dispose();
+    _dio.close();
+  }
+
+  /// 加载中的配置或凭据读取失败时阻止请求，避免错误路由到内部服务。
+  void _ensureConfigurationReady() {
+    final error = _configurationError;
+    if (error != null) throw ExternalAiResponseException(error);
+  }
 
   /// 流式响应体只能被消费一次；这里在 NDJSON 解码入口旁路打印原始帧，
   /// 既能看到每次服务端推送的响应内容，又不会破坏后续业务解析。
@@ -664,10 +829,16 @@ class SentenceAiApiClient {
 /// AI API 客户端单例 Provider
 @Riverpod(keepAlive: true)
 SentenceAiApiClient sentenceAiApiClient(Ref ref) {
+  final settings = ref.watch(externalAiSettingsProvider);
   final client = SentenceAiApiClient(
     baseUrl: apiBaseUrl,
     appVersion: readAppVersion(ref),
-    tokenCoordinator: ref.read(supabaseTokenCoordinatorProvider),
+    tokenCoordinator:
+        settings.configOrNull == null && settings.requestError == null
+        ? ref.read(supabaseTokenCoordinatorProvider)
+        : null,
+    externalConfig: settings.configOrNull,
+    configurationError: settings.requestError,
   );
   ref.onDispose(client.dispose);
   return client;

@@ -64,6 +64,12 @@ class _CancelAwareApi implements ChatApi {
   void dispose() {}
 }
 
+class _ExternalApi extends _ScriptApi implements ExternalChatApi {
+  _ExternalApi(super.script);
+  @override
+  bool get usesExternalProvider => true;
+}
+
 class _Trial extends AiTrialUsageNotifier {
   @override
   Map<PremiumFeature, int> build() => const {};
@@ -87,15 +93,16 @@ void main() {
   List<Override> overrides(
     ChatApi api, {
     FreeAllowancePolicy policy = const AlwaysAllowPolicy(),
+    bool authenticated = true,
   }) => [
     // controller 完成/中断一轮会记录埋点，避免依赖 app 启动期全局初始化。
     analyticsServiceProvider.overrideWithValue(
       createTestAnalyticsServiceSync(),
     ),
     chatApiClientProvider.overrideWithValue(api),
-    isAuthenticatedProvider.overrideWithValue(true),
+    isAuthenticatedProvider.overrideWithValue(authenticated),
     supabaseSessionProvider.overrideWith(
-      (ref) => Stream<Session?>.value(_session()),
+      (ref) => Stream<Session?>.value(authenticated ? _session() : null),
     ),
     freeAllowancePolicyProvider.overrideWithValue(policy),
     aiTrialUsageProvider.overrideWith(() => _Trial()),
@@ -121,6 +128,27 @@ void main() {
     greeting: greeting,
     contextSummary: summary,
   );
+
+  testWidgets('外部模式未登录仍可从真实输入框发送，不弹登录框', (tester) async {
+    var calls = 0;
+    final api = _ExternalApi(() async* {
+      calls++;
+      yield const ChatTextFrame(text: 'External reply', isFinal: true);
+    });
+    await pumpChatWidget(
+      tester,
+      wrap(ChatView(config: config())),
+      overrides: overrides(api, authenticated: false),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Explain');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.text('External reply'), findsWidgets);
+  });
 
   testWidgets('空态显示 greeting + context chip', (tester) async {
     await pumpChatWidget(

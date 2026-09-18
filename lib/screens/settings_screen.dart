@@ -18,6 +18,7 @@ import '../providers/app_update_provider.dart';
 import '../providers/dev_version_override_provider.dart';
 import '../providers/developer_options_provider.dart';
 import '../providers/offline_asr_settings_provider.dart';
+import '../providers/external_ai_settings_provider.dart';
 import '../providers/tts/tts_settings_provider.dart';
 import '../services/tts/tts_engine.dart';
 import '../providers/package_info_provider.dart';
@@ -63,6 +64,7 @@ import 'playback_settings_screen.dart';
 import 'preferences_viewer_screen.dart';
 import 'storage_browser_screen.dart';
 import 'reminder_settings_screen.dart';
+import 'external_ai_settings_screen.dart';
 import '../config/api_config.dart';
 import '../widgets/app_update_dialog.dart';
 
@@ -402,8 +404,38 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
         ),
+        ListTile(
+          leading: const Icon(Icons.auto_awesome),
+          title: Text(l10n.externalAiTitle),
+          subtitle: Text(
+            _externalAiSummary(l10n, ref.watch(externalAiSettingsProvider)),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const ExternalAiSettingsScreen(),
+            ),
+          ),
+        ),
       ],
     );
+  }
+
+  /// 服务摘要使用当前界面语言，并显式区分加载和读取失败。
+  String _externalAiSummary(
+    AppLocalizations l10n,
+    ExternalAiSettings settings,
+  ) {
+    if (settings.isLoading) return '…';
+    if (settings.loadError != null) return l10n.externalAiLoadFailed;
+    final label = settings.provider == ExternalAiProvider.custom
+        ? l10n.externalAiCustom
+        : settings.provider.label;
+    return settings.provider == ExternalAiProvider.echoLoop
+        ? label
+        : '$label · ${settings.model.trim()}';
   }
 
   /// 设置首页仅展示当前语音引擎品牌，口音和音色留在语音合成详情页展示。

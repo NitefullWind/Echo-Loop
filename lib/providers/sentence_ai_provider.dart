@@ -302,7 +302,9 @@ class SentenceAiNotifier {
     CancelToken? cancelToken,
     bool respectLocalQuotaReset = false,
   }) async* {
-    final hash = translationContextHash(text, previous: previous, next: next);
+    final hash = _cacheHash(
+      translationContextHash(text, previous: previous, next: next),
+    );
     final cacheKey = '$hash:$targetLanguage';
     final l2Type = 'translation_v2:$targetLanguage';
 
@@ -330,16 +332,19 @@ class SentenceAiNotifier {
       }
     }
 
-    // L3: 流式 API 调用
-    if (accessToken == null || accessToken.isEmpty) {
+    // L3: 流式 API 调用。外部模型使用用户自己的 Key，不依赖登录与会员额度。
+    final usesExternalProvider = _apiClient.usesExternalProvider;
+    if (!usesExternalProvider && (accessToken == null || accessToken.isEmpty)) {
       AppLogger.log('SentenceAI', '翻译 L3 需要登录，未发现 Supabase access token');
       throw const AiFeatureAuthRequiredException();
     }
-    await _beforeApiRequest?.call(
-      PremiumFeature.aiTranslation,
-      respectLocalQuotaReset: respectLocalQuotaReset,
-    );
-    _guardFeature?.call(PremiumFeature.aiTranslation);
+    if (!usesExternalProvider) {
+      await _beforeApiRequest?.call(
+        PremiumFeature.aiTranslation,
+        respectLocalQuotaReset: respectLocalQuotaReset,
+      );
+      _guardFeature?.call(PremiumFeature.aiTranslation);
+    }
 
     final existing = _pendingTranslations[cacheKey];
     if (existing != null) {
@@ -359,7 +364,7 @@ class SentenceAiNotifier {
         previous: previous,
         next: next,
         targetLanguage: targetLanguage,
-        accessToken: accessToken,
+        accessToken: accessToken ?? '',
       ),
     );
     yield* pending.subscribe();
@@ -408,7 +413,7 @@ class SentenceAiNotifier {
             await pending.addError(mapped, stackTrace);
             return;
           }
-          if (attempt < 2) {
+          if (!_apiClient.usesExternalProvider && attempt < 2) {
             AppLogger.log('SentenceAI', '翻译 L3 失败，重试一次: $e');
             continue;
           }
@@ -419,7 +424,7 @@ class SentenceAiNotifier {
             await pending.close();
             return;
           }
-          if (attempt < 2) {
+          if (!_apiClient.usesExternalProvider && attempt < 2) {
             AppLogger.log('SentenceAI', '翻译流失败，重试一次: $e');
             continue;
           }
@@ -436,8 +441,10 @@ class SentenceAiNotifier {
           l2Type,
           jsonEncode({'translation': finalTranslation.translation}),
         );
-        await _onApiSucceeded?.call(PremiumFeature.aiTranslation);
-        _onConsumeTrial?.call(PremiumFeature.aiTranslation);
+        if (!_apiClient.usesExternalProvider) {
+          await _onApiSucceeded?.call(PremiumFeature.aiTranslation);
+          _onConsumeTrial?.call(PremiumFeature.aiTranslation);
+        }
       }
       await pending.close();
     } catch (e, stackTrace) {
@@ -466,7 +473,7 @@ class SentenceAiNotifier {
     CancelToken? cancelToken,
     bool respectLocalQuotaReset = false,
   }) async* {
-    final hash = hashText(text);
+    final hash = _cacheHash(hashText(text));
     final cacheKey = '$hash:$targetLanguage';
     final l2Type = 'analysis_v2:$targetLanguage';
 
@@ -494,16 +501,19 @@ class SentenceAiNotifier {
       }
     }
 
-    // L3: 流式 API 调用
-    if (accessToken == null || accessToken.isEmpty) {
+    // L3: 流式 API 调用。外部模型使用用户自己的 Key，不依赖登录与会员额度。
+    final usesExternalProvider = _apiClient.usesExternalProvider;
+    if (!usesExternalProvider && (accessToken == null || accessToken.isEmpty)) {
       AppLogger.log('SentenceAI', '解析 L3 需要登录，未发现 Supabase access token');
       throw const AiFeatureAuthRequiredException();
     }
-    await _beforeApiRequest?.call(
-      PremiumFeature.aiAnalysis,
-      respectLocalQuotaReset: respectLocalQuotaReset,
-    );
-    _guardFeature?.call(PremiumFeature.aiAnalysis);
+    if (!usesExternalProvider) {
+      await _beforeApiRequest?.call(
+        PremiumFeature.aiAnalysis,
+        respectLocalQuotaReset: respectLocalQuotaReset,
+      );
+      _guardFeature?.call(PremiumFeature.aiAnalysis);
+    }
 
     final existing = _pendingAnalyses[cacheKey];
     if (existing != null) {
@@ -521,7 +531,7 @@ class SentenceAiNotifier {
         l2Type: l2Type,
         text: text,
         targetLanguage: targetLanguage,
-        accessToken: accessToken,
+        accessToken: accessToken ?? '',
       ),
     );
     yield* pending.subscribe();
@@ -563,7 +573,7 @@ class SentenceAiNotifier {
             await pending.addError(mapped, stackTrace);
             return;
           }
-          if (attempt < 2) {
+          if (!_apiClient.usesExternalProvider && attempt < 2) {
             AppLogger.log('SentenceAI', '解析 L3 失败，重试一次: $e');
             continue;
           }
@@ -574,7 +584,7 @@ class SentenceAiNotifier {
             await pending.close();
             return;
           }
-          if (attempt < 2) {
+          if (!_apiClient.usesExternalProvider && attempt < 2) {
             AppLogger.log('SentenceAI', '解析流失败，重试一次: $e');
             continue;
           }
@@ -591,8 +601,10 @@ class SentenceAiNotifier {
           l2Type,
           jsonEncode(finalAnalysis.toJson()),
         );
-        await _onApiSucceeded?.call(PremiumFeature.aiAnalysis);
-        _onConsumeTrial?.call(PremiumFeature.aiAnalysis);
+        if (!_apiClient.usesExternalProvider) {
+          await _onApiSucceeded?.call(PremiumFeature.aiAnalysis);
+          _onConsumeTrial?.call(PremiumFeature.aiAnalysis);
+        }
       } else if (finalAnalysis != null) {
         AppLogger.log('SentenceAI', '解析最终结果为空，不落缓存（可重试）');
       }
@@ -623,7 +635,7 @@ class SentenceAiNotifier {
     CancelToken? cancelToken,
     bool respectLocalQuotaReset = false,
   }) async* {
-    final hash = hashText(text);
+    final hash = _cacheHash(hashText(text));
 
     // L1: 内存缓存（空结果不视为有效缓存）
     final l1 = _senseGroupCache[hash];
@@ -655,16 +667,19 @@ class SentenceAiNotifier {
       }
     }
 
-    // L3: 流式 API 调用
-    if (accessToken == null || accessToken.isEmpty) {
+    // L3: 流式 API 调用。外部模型使用用户自己的 Key，不依赖登录与会员额度。
+    final usesExternalProvider = _apiClient.usesExternalProvider;
+    if (!usesExternalProvider && (accessToken == null || accessToken.isEmpty)) {
       AppLogger.log('SenseGroup', 'L3 需要登录，未发现 Supabase access token');
       throw const AiFeatureAuthRequiredException();
     }
-    await _beforeApiRequest?.call(
-      PremiumFeature.aiSenseGroup,
-      respectLocalQuotaReset: respectLocalQuotaReset,
-    );
-    _guardFeature?.call(PremiumFeature.aiSenseGroup);
+    if (!usesExternalProvider) {
+      await _beforeApiRequest?.call(
+        PremiumFeature.aiSenseGroup,
+        respectLocalQuotaReset: respectLocalQuotaReset,
+      );
+      _guardFeature?.call(PremiumFeature.aiSenseGroup);
+    }
 
     final existing = _pendingSenseGroups[hash];
     if (existing != null) {
@@ -679,7 +694,7 @@ class SentenceAiNotifier {
         pending,
         hash: hash,
         text: text,
-        accessToken: accessToken,
+        accessToken: accessToken ?? '',
       ),
     );
     yield* pending.subscribe();
@@ -717,7 +732,7 @@ class SentenceAiNotifier {
             await pending.addError(mapped, stackTrace);
             return;
           }
-          if (attempt < 2) {
+          if (!_apiClient.usesExternalProvider && attempt < 2) {
             AppLogger.log('SenseGroup', '意群 L3 失败，重试一次: $e');
             continue;
           }
@@ -728,7 +743,7 @@ class SentenceAiNotifier {
             await pending.close();
             return;
           }
-          if (attempt < 2) {
+          if (!_apiClient.usesExternalProvider && attempt < 2) {
             AppLogger.log('SenseGroup', '意群流失败，重试一次: $e');
             continue;
           }
@@ -749,8 +764,10 @@ class SentenceAiNotifier {
           'sense_groups',
           jsonEncode(finalResult.toJson()),
         );
-        await _onApiSucceeded?.call(PremiumFeature.aiSenseGroup);
-        _onConsumeTrial?.call(PremiumFeature.aiSenseGroup);
+        if (!_apiClient.usesExternalProvider) {
+          await _onApiSucceeded?.call(PremiumFeature.aiSenseGroup);
+          _onConsumeTrial?.call(PremiumFeature.aiSenseGroup);
+        }
       } else if (finalResult != null) {
         AppLogger.log('SenseGroup', '最终结果空或 concat 校验失败，不落缓存（可重试）');
       }
@@ -776,7 +793,9 @@ class SentenceAiNotifier {
     String? next,
     String? targetLanguage,
   }) {
-    final hash = translationContextHash(text, previous: previous, next: next);
+    final hash = _cacheHash(
+      translationContextHash(text, previous: previous, next: next),
+    );
     if (targetLanguage != null) {
       return _translationCache['$hash:$targetLanguage'];
     }
@@ -791,7 +810,7 @@ class SentenceAiNotifier {
   ///
   /// [targetLanguage] 不传时遍历所有语言版本（向后兼容），传入时精确匹配。
   SentenceAnalysis? getCachedAnalysis(String text, {String? targetLanguage}) {
-    final hash = hashText(text);
+    final hash = _cacheHash(hashText(text));
     if (targetLanguage != null) {
       return _analysisCache['$hash:$targetLanguage'];
     }
@@ -803,7 +822,7 @@ class SentenceAiNotifier {
 
   /// 同步查找 L1 意群缓存（仅内存）
   SenseGroupResult? getCachedSenseGroups(String text) {
-    return _senseGroupCache[hashText(text)];
+    return _senseGroupCache[_cacheHash(hashText(text))];
   }
 
   /// 从 L2 SQLite 预加载翻译到 L1 内存（不调用 L3 API）
@@ -815,7 +834,9 @@ class SentenceAiNotifier {
     String? previous,
     String? next,
   }) async {
-    final hash = translationContextHash(text, previous: previous, next: next);
+    final hash = _cacheHash(
+      translationContextHash(text, previous: previous, next: next),
+    );
     final cacheKey = '$hash:$targetLanguage';
     if (_translationCache.containsKey(cacheKey)) return true;
     final dbResult = await _cacheDao.getByHash(
@@ -844,7 +865,7 @@ class SentenceAiNotifier {
     String text, {
     required String targetLanguage,
   }) async {
-    final hash = hashText(text);
+    final hash = _cacheHash(hashText(text));
     final cacheKey = '$hash:$targetLanguage';
     if (_analysisCache.containsKey(cacheKey)) return true;
     final dbResult = await _cacheDao.getByHash(
@@ -871,7 +892,7 @@ class SentenceAiNotifier {
   ///
   /// 返回 true 表示 L1 或 L2 命中，false 表示无缓存。
   Future<bool> preloadSenseGroupsFromDb(String text) async {
-    final hash = hashText(text);
+    final hash = _cacheHash(hashText(text));
     if (_senseGroupCache.containsKey(hash)) return true;
     final dbResult = await _cacheDao.getByHash(hash, 'sense_groups');
     if (dbResult != null) {
@@ -890,11 +911,29 @@ class SentenceAiNotifier {
     return false;
   }
 
+  /// 给同一学习内容附加当前 AI 服务命名空间，隔离不同模型的缓存结果。
+  String _cacheHash(String hash) => _apiClient.usesExternalProvider
+      ? hashText('$hash|${_apiClient.cacheNamespace}')
+      : hash;
+
   /// 清除内存缓存
   void clearMemoryCache() {
     _translationCache.clear();
     _analysisCache.clear();
     _senseGroupCache.clear();
+  }
+
+  /// 切换模型或销毁服务时立即取消旧请求，防止迟到的结果继续写缓存。
+  void dispose() {
+    for (final pending in _pendingTranslations.values) {
+      pending.cancelToken.cancel('AI provider changed');
+    }
+    for (final pending in _pendingAnalyses.values) {
+      pending.cancelToken.cancel('AI provider changed');
+    }
+    for (final pending in _pendingSenseGroups.values) {
+      pending.cancelToken.cancel('AI provider changed');
+    }
   }
 
   /// 把后端已定义语义的状态码映射为业务异常（客户端按状态码分别反应）：
@@ -906,6 +945,7 @@ class SentenceAiNotifier {
     PremiumFeature feature,
     DioException error,
   ) async {
+    if (_apiClient.usesExternalProvider) return null;
     final statusCode = error.response?.statusCode;
     if (statusCode == 401) {
       AppLogger.log('SentenceAI', '后端 401：登录态失效，转登录引导 feature=${feature.name}');
@@ -930,10 +970,11 @@ class SentenceAiNotifier {
 
 /// SentenceAiNotifier Provider
 final sentenceAiNotifierProvider = Provider<SentenceAiNotifier>((ref) {
-  ref.watch(aiQuotaLimitCleanupProvider);
-  return SentenceAiNotifier(
+  final client = ref.watch(sentenceAiApiClientProvider);
+  if (!client.usesExternalProvider) ref.watch(aiQuotaLimitCleanupProvider);
+  final notifier = SentenceAiNotifier(
     cacheDao: ref.watch(sentenceAiCacheDaoProvider),
-    apiClient: ref.watch(sentenceAiApiClientProvider),
+    apiClient: client,
     // 额度闸：已登录前提下未解锁（非会员且试用用尽）→ 抛配额超限。
     guardFeature: (feature) {
       if (!ref.read(featureAccessProvider(feature))) {
@@ -982,4 +1023,6 @@ final sentenceAiNotifierProvider = Provider<SentenceAiNotifier>((ref) {
       await ref.read(aiQuotaLimitStoreProvider).clearReset(userId, feature);
     },
   );
+  ref.onDispose(notifier.dispose);
+  return notifier;
 });

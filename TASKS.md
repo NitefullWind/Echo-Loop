@@ -3,6 +3,9 @@
 > 仅保留未完成任务；历史完成记录见 [docs/tasks-archive/tasks-2026-08-28-full.md](./docs/tasks-archive/tasks-2026-08-28-full.md)。
 
 ## 最近完成
+
+- [x] 支持配置 OpenAI-compatible 外部 AI（OpenAI、DeepSeek、自定义 Base URL），覆盖翻译、解析、意群、AI 词典和聊天；Key 使用系统安全存储，服务切换取消旧请求并隔离缓存。相关静态分析通过，440 项测试通过；额外 Windows 播放回归的 27 项失败与未修改版本一致。使用说明见 [外部 AI](docs/external-ai.md)。**完成时间**: 2026-09-18
+
 - [x] 修复随心听视频页退出后仍继续播放：由页面 owner 在 dispose 生命周期统一释放 MediaPlayback/MediaEngine，保持与音频随心听一致。**完成时间**: 2026-09-01
 
 - [x] 修复随心听与视频学习模式共享 MediaEngine 时的生命周期失真：以底层资源状态判定媒体是否 ready，串行化媒体加载/释放，并隔离旧资源代际。**完成时间**: 2026-09-01
@@ -157,6 +160,7 @@
 
 ## 后端与发布
 
+- [ ] 在 NitefullWind/Echo-Loop fork 提交外部 AI 改动，配置独立 Android APK Actions 流程并验证首次云端构建。
 - [ ] 后端 OAuth 会话（后端仓库实现；当前 Flutter 仓库不伪造生产后端）。
 - [ ] 跨平台验证与发布准备。
 

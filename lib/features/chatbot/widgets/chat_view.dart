@@ -11,6 +11,8 @@ import '../../auth/sign_in_required_dialog.dart';
 import '../../subscription/widgets/feature_gate.dart';
 import '../models/chatbot_config.dart';
 import '../providers/chat_session_controller.dart';
+import '../providers/chat_api_client_provider.dart';
+import '../services/chat_api_client.dart';
 import '../screens/chat_edit_screen.dart';
 import 'chat_composer.dart';
 import 'chat_gate_banner.dart';
@@ -156,12 +158,14 @@ class _ChatViewState extends ConsumerState<ChatView> {
       ),
     );
     if (edited == null || !mounted) return; // 关闭编辑页 = 取消，不改会话
-    final ok = await ensureSignedInForAction(
-      context: context,
-      ref: ref,
-      title: l10n.chatSignInTitle,
-      message: l10n.chatSignInMessage,
-    );
+    final ok =
+        usesExternalChat(ref.read(chatApiClientProvider)) ||
+        await ensureSignedInForAction(
+          context: context,
+          ref: ref,
+          title: l10n.chatSignInTitle,
+          message: l10n.chatSignInMessage,
+        );
     if (!ok || !mounted) return;
     await notifier.editAndResend(messageId, edited);
   }
@@ -174,12 +178,14 @@ class _ChatViewState extends ConsumerState<ChatView> {
     ChatSessionController notifier,
     String text,
   ) async {
-    final ok = await ensureSignedInForAction(
-      context: context,
-      ref: ref,
-      title: l10n.chatSignInTitle,
-      message: l10n.chatSignInMessage,
-    );
+    final ok =
+        usesExternalChat(ref.read(chatApiClientProvider)) ||
+        await ensureSignedInForAction(
+          context: context,
+          ref: ref,
+          title: l10n.chatSignInTitle,
+          message: l10n.chatSignInMessage,
+        );
     if (!ok) return;
     final quote = _pendingQuote;
     if (quote != null && mounted) setState(() => _pendingQuote = null);

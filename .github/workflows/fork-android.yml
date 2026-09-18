@@ -1,0 +1,120 @@
+name: Build personal Android APK
+
+# 个人 fork 的独立构建：外部模型在应用内配置，不依赖原作者的服务或商店凭据。
+on:
+  push:
+    branches: [external-ai]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: personal-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    if: github.repository != 'echo-loop/Echo-Loop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FLUTTER_VERSION: '3.41.5'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # dev flavor 固定使用 debug signingConfig；恢复私人证书可保证跨构建覆盖升级。
+      # 私钥只来自本 fork 的 Secret，既不提交源码，也不进入可下载的构建产物。
+      - name: Restore personal signing key
+        env:
+          FORK_ANDROID_KEYSTORE_BASE64: ${{ secrets.FORK_ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$FORK_ANDROID_KEYSTORE_BASE64" ]]; then
+            echo '::error::Set the FORK_ANDROID_KEYSTORE_BASE64 repository secret before building.'
+            exit 1
+          fi
+          install -d -m 700 "$HOME/.android"
+          printf '%s' "$FORK_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
+          keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey > /dev/null
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Get locked dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Analyze
+        run: flutter analyze --no-pub --no-fatal-warnings --no-fatal-infos lib test
+
+      - name: Test external AI and existing text learning flows
+        run: |
+          flutter test --no-pub --concurrency=1 \
+            test/providers/external_ai_settings_provider_test.dart \
+            test/providers/external_ai_storage_test.dart \
+            test/providers/external_ai_learning_test.dart \
+            test/providers/sentence_ai_provider_test.dart \
+            test/providers/dictionary/lookup_controller_test.dart \
+            test/services/openai_compatible_ai_client_test.dart \
+            test/services/external_ai_transport_test.dart \
+            test/services/sentence_ai_external_test.dart \
+            test/services/sentence_ai_api_client_test.dart \
+            test/services/dictionary/ai_dictionary_source_test.dart \
+            test/features/chatbot/providers/chat_session_controller_test.dart \
+            test/features/chatbot/widgets/chat_view_test.dart \
+            test/features/chatbot/widgets/sentence_chat_button_test.dart \
+            test/screens/external_ai_settings_screen_test.dart \
+            test/screens/settings_screen_test.dart \
+            test/widgets/sentence_explanation_view_auth_test.dart
+
+      # 使用现有 dev flavor，包名 app.echoloop.dev，可与官方版共存。
+      # 不注入任何模型 Key；原作者后端凭据缺省时，应用支持匿名本地学习。
+      - name: Build release APK
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          flutter build apk --release --flavor=dev \
+            --target-platform android-arm64 \
+            --build-number="$BUILD_NUMBER"
+
+      - name: Prepare download
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/personal-apk
+          cp build/app/outputs/flutter-apk/app-dev-release.apk \
+            "build/personal-apk/Echo-Loop-External-AI-${BUILD_NUMBER}-arm64.apk"
+          cd build/personal-apk
+          sha256sum *.apk > SHA256SUMS.txt
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Echo-Loop-External-AI-arm64-${{ github.run_number }}
+          path: build/personal-apk/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Download instructions
+        run: |
+          {
+            echo '### Personal Android build'
+            echo 'Download the APK ZIP under **Artifacts** on this run page and extract it.'
+            echo 'Install the APK on an Android 7+ ARM64 device. It appears as **Echo Loop Dev** and coexists with the official app.'
+            echo 'Open **Settings → Learning → External AI**, select a provider, and enter your own API key.'
+            echo 'The APK uses a persistent personal signing key. Keep the signing Secret to preserve upgrade compatibility.'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -67,6 +67,13 @@ class _RecordingTrialUsage extends AiTrialUsageNotifier {
   void consume(PremiumFeature feature) => consumeCount++;
 }
 
+/// 用户服务使用独立的鉴权/额度，不触发 Echo Loop 登录与付费引导。
+class _ExternalScriptApi extends _ScriptApi implements ExternalChatApi {
+  _ExternalScriptApi(super.script);
+  @override
+  bool get usesExternalProvider => true;
+}
+
 class _FixedSubscription extends SubscriptionController {
   _FixedSubscription(this._state);
   final EntitlementState _state;
@@ -191,6 +198,40 @@ void main() {
     await ctrl(c).send('hi');
     expect(trialUsage.consumeCount, 0);
     expect(st(c).messages.last.status, ChatMessageStatus.done);
+  });
+
+  test('外部模式无登录、无 session、无会员额度仍可聊天，不消耗试用', () async {
+    final api = _ExternalScriptApi((_) => okStream());
+    final c = await make(
+      api,
+      authenticated: false,
+      hasSession: false,
+      policy: const _DenyPolicy(),
+    );
+    await ctrl(c).send('Explain this.');
+    expect(st(c).gate, ChatGate.none);
+    expect(st(c).messages.last.status, ChatMessageStatus.done);
+    expect(api.callCount, 1);
+    expect(trialUsage.consumeCount, 0);
+  });
+
+  test('外部余额不足只显示消息错误，不引导购买 Echo Loop', () async {
+    final api = _ExternalScriptApi(
+      (_) => Stream.error(
+        DioException(
+          requestOptions: RequestOptions(path: '/chat'),
+          response: Response(
+            requestOptions: RequestOptions(path: '/chat'),
+            statusCode: 402,
+          ),
+        ),
+      ),
+    );
+    final c = await make(api, authenticated: false, hasSession: false);
+    await ctrl(c).send('Explain.');
+    expect(st(c).messages.last.status, ChatMessageStatus.error);
+    expect(st(c).gate, ChatGate.none);
+    expect(trialUsage.consumeCount, 0);
   });
 
   test('空文本 / 流式中 send 无效', () async {
@@ -503,6 +544,47 @@ void main() {
     expect(st(c).messages.first.id, userId);
     ctrl(c).stop();
     await f;
+  });
+
+  test('切换服务取消在途请求，丢弃迟到回答，后续发送使用新服务', () async {
+    final started = Completer<void>();
+    final stream = StreamController<ChatTextFrame>();
+    CancelToken? activeToken;
+    final oldApi = _ExternalScriptApi((token) {
+      activeToken = token;
+      started.complete();
+      return stream.stream;
+    });
+    final activeApi = StateProvider<ChatApi>((ref) => oldApi);
+    trialUsage = _RecordingTrialUsage();
+    final c = ProviderContainer(
+      overrides: [
+        analyticsOverride(),
+        chatApiClientProvider.overrideWith((ref) => ref.watch(activeApi)),
+        isAuthenticatedProvider.overrideWithValue(false),
+        aiTrialUsageProvider.overrideWith(() => trialUsage),
+        appSettingsProvider.overrideWith(
+          () =>
+              TestAppSettings(const AppSettingsState(nativeLanguage: 'zh-CN')),
+        ),
+      ],
+    );
+    addTearDown(c.dispose);
+    final pending = ctrl(c).send('old question');
+    await started.future;
+    final newApi = _ExternalScriptApi((_) => okStream());
+    c.read(activeApi.notifier).state = newApi;
+    await c.pump();
+    expect(activeToken?.isCancelled, true);
+    expect(st(c).messages, isEmpty);
+    stream.add(const ChatTextFrame(text: 'late old answer', isFinal: true));
+    await stream.close();
+    await pending;
+    expect(st(c).messages, isEmpty);
+    await ctrl(c).send('new question');
+    expect(newApi.callCount, 1);
+    expect(st(c).messages.last.content, '它表示……');
+    expect(trialUsage.consumeCount, 0);
   });
 
   test('clear → 回初始态并取消在途', () async {

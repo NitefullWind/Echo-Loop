@@ -9,6 +9,64 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
+  String get externalAiTitle => 'External AI';
+
+  @override
+  String get externalAiDescription =>
+      'Translations, analysis, sense groups, AI dictionary, and chat will use your model service.';
+
+  @override
+  String get externalAiProvider => 'Provider';
+
+  @override
+  String get externalAiBaseUrl => 'Base URL';
+
+  @override
+  String get externalAiModel => 'Model';
+
+  @override
+  String get externalAiApiKey => 'API Key';
+
+  @override
+  String get externalAiApiKeyHint => 'Leave empty to keep the saved key';
+
+  @override
+  String get externalAiApiKeyStorage =>
+      'The API key is stored only in this device’s secure storage.';
+
+  @override
+  String get externalAiPrivacy =>
+      'Sentences, context and chat messages are sent to your provider and billed by API usage. A ChatGPT subscription does not include API credits.';
+
+  @override
+  String get externalAiLimitations =>
+      'Cloud transcription still uses Echo Loop. Switch back to Echo Loop for retell audio evaluation; this deletes the saved API key.';
+
+  @override
+  String get externalAiLoadFailed =>
+      'AI settings could not be loaded. Requests are paused. Retry or save a new configuration.';
+
+  @override
+  String get externalAiSaveFailed =>
+      'Could not save AI settings. Check secure storage and retry.';
+
+  @override
+  String get externalAiSaved => 'External AI settings saved';
+
+  @override
+  String get externalAiShow => 'Show key';
+
+  @override
+  String get externalAiHide => 'Hide key';
+
+  @override
+  String get externalAiCustom => 'Custom compatible service';
+
+  @override
+  String get externalAiInvalid =>
+      'Enter a valid HTTP(S) Base URL, model and API key. Enter a new key when changing providers or addresses.';
+
+  @override
   String get startupLocalDataErrorTitle => 'Could not prepare local data';
 
   @override

@@ -35,7 +35,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../helpers/mock_providers.dart';
 import '../helpers/test_app.dart';
 
-class _MockApiClient extends Mock implements SentenceAiApiClient {}
+class _MockApiClient extends Mock implements SentenceAiApiClient {
+  @override
+  bool get usesExternalProvider => false;
+}
 
 /// 测试用 BookmarkDao（AnnotationContentView 词典/收藏依赖）
 class _TestBookmarkDao implements BookmarkDao {

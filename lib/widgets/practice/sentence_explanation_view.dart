@@ -35,6 +35,7 @@ import '../../providers/audio_engine/audio_engine_provider.dart';
 import '../../providers/audio_sentences_provider.dart';
 import '../../providers/learning_settings_provider.dart';
 import '../../providers/sentence_ai_provider.dart';
+import '../../providers/external_ai_settings_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/saved_sense_group_provider.dart';
 import '../../services/app_logger.dart';
@@ -235,6 +236,26 @@ class _SentenceExplanationViewState
   void initState() {
     super.initState();
     _fetchWordTimestamps();
+    _preloadCache();
+    ref.listenManual(externalAiSettingsProvider, (previous, next) {
+      if (previous != null &&
+          (previous.provider != next.provider ||
+              previous.baseUrl != next.baseUrl ||
+              previous.model != next.model ||
+              previous.apiKey != next.apiKey)) {
+        _resetAiContent();
+      }
+    });
+  }
+
+  /// 切换服务时作废旧请求和手动展开内容，再按新服务的命名空间加载缓存。
+  void _resetAiContent() {
+    if (!mounted) return;
+    setState(() {
+      _cardKey = GlobalKey<SentenceAnnotationCardState>();
+      _resetSenseGroups();
+      _dismissActionBar();
+    });
     _preloadCache();
   }
 
@@ -697,6 +718,9 @@ class _SentenceExplanationViewState
             final isSaved = savedTexts.contains(normalized);
             final l10n = AppLocalizations.of(context)!;
             final askAiEnabled = shouldShowAiChatAssistantEntry(
+              externalProviderConfigured: ref
+                  .watch(externalAiSettingsProvider)
+                  .isConfigured,
               chatbotEnabled: kChatbotEnabled,
               remoteEnabled: ref.read(
                 remoteFeatureEnabledProvider(RemoteFeature.aiChatAssistant),
@@ -907,7 +931,7 @@ class _SentenceExplanationViewState
   Widget build(BuildContext context) {
     // 调用方可以显式注入测试或会话级 notifier；统一页面入口未注入时，
     // 必须回退到 Provider，避免工具栏请求回调为空而整组 AI 按钮被禁用。
-    final ai = widget.aiNotifier ?? ref.read(sentenceAiNotifierProvider);
+    final ai = widget.aiNotifier ?? ref.watch(sentenceAiNotifierProvider);
     final nativeLanguage = ref.watch(
       appSettingsProvider.select((s) => s.nativeLanguage),
     );
@@ -965,7 +989,8 @@ class _SentenceExplanationViewState
     // 讲解视图自包含：是否自动请求只由认证状态和用户 AI 设置决定，
     // 宿主无需额外传入“启用自动加载”的开关。
     final shouldAutoLoadSentenceAi =
-        accessToken != null && accessToken.isNotEmpty;
+        ref.watch(externalAiSettingsProvider).isConfigured ||
+        (accessToken != null && accessToken.isNotEmpty);
     final willStartAutoLoad =
         shouldAutoLoadSentenceAi &&
         (autoShowAiAnalysis ||

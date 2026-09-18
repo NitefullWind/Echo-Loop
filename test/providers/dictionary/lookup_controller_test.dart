@@ -12,6 +12,7 @@ import 'package:echo_loop/models/dictionary/dictionary_lookup_result.dart';
 import 'package:echo_loop/providers/dictionary/dictionary_registry.dart';
 import 'package:echo_loop/providers/dictionary/lookup_controller.dart';
 import 'package:echo_loop/providers/dictionary/visible_sources_provider.dart';
+import 'package:echo_loop/providers/external_ai_settings_provider.dart';
 import 'package:echo_loop/services/dictionary/ai_dictionary_source.dart';
 import 'package:echo_loop/services/dictionary/dictionary_source.dart';
 import 'package:flutter/material.dart';
@@ -36,6 +37,20 @@ class _RecordingUsageTracker implements UsageTracker {
 
   @override
   Future<void> resetForTests() async {}
+}
+
+class _SwitchableAiSettings extends ExternalAiSettingsController {
+  @override
+  ExternalAiSettings build() => const ExternalAiSettings();
+
+  void useExternal() {
+    state = const ExternalAiSettings(
+      provider: ExternalAiProvider.custom,
+      baseUrl: 'https://example.com/v1',
+      model: 'new-model',
+      apiKey: 'key',
+    );
+  }
 }
 
 /// 假 AI 源：满足 `is AiDictionarySource`，lookupStream 单帧返回可控结果/异常。
@@ -208,6 +223,51 @@ void main() {
     addTearDown(sub.close);
     return c.read(p.notifier);
   }
+
+  test('查看其它词典时切换模型，再返回 AI 必须重新查询', () async {
+    final ai = _ControllableAiSource();
+    final local = ControllableSource('local');
+    final settings = _SwitchableAiSettings();
+    final c = ProviderContainer(
+      overrides: [
+        dictionarySourcesByIdProvider.overrideWithValue({
+          'ai': ai,
+          'local': local,
+        }),
+        resolvedDefaultSourceIdProvider.overrideWithValue('ai'),
+        externalAiSettingsProvider.overrideWith(() => settings),
+        dictionaryLookupContextProvider.overrideWithValue(
+          const DictionaryLookupContext(targetLanguage: 'zh-CN'),
+        ),
+        usageTrackerProvider.overrideWithValue(_RecordingUsageTracker()),
+      ],
+    );
+    addTearDown(c.dispose);
+    final ctrl = start(c, 'run');
+    await pump();
+    ai.calls.single.add(_result('old-model'));
+    await ai.calls.single.close();
+    await pump();
+    ctrl.selectSource('local');
+    local.calls.single.complete(_result('local'));
+    await pump();
+    settings.useExternal();
+    await c.pump();
+    expect(ai.calls, hasLength(1));
+    ctrl.selectSource('ai');
+    await pump();
+    expect(ai.calls, hasLength(2));
+    expect(
+      c.read(dictionaryLookupControllerProvider('run')).current,
+      isA<LookupLoading>(),
+    );
+    ai.calls.last.add(_result('new-model'));
+    await ai.calls.last.close();
+    await pump();
+    final current = c.read(dictionaryLookupControllerProvider('run')).current;
+    expect(current, isA<LookupLoaded>());
+    if (current is LookupLoaded) expect(current.result.headword, 'new-model');
+  });
 
   test('进入即查默认源 → Loading 然后 Loaded', () async {
     final a = ControllableSource('a');

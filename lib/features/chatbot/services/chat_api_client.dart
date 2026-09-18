@@ -51,6 +51,43 @@ abstract interface class ChatApi {
   void dispose();
 }
 
+/// 可选的外部聊天能力标记。
+///
+/// 单独建模可以保持现有 [ChatApi] 测试替身和内部实现的接口兼容性。
+abstract interface class ExternalChatApi {
+  /// 是否直接使用用户自己的模型服务。
+  bool get usesExternalProvider;
+}
+
+/// 统一判断聊天请求是否由用户自己的服务鉴权。
+bool usesExternalChat(ChatApi client) => switch (client) {
+  ExternalChatApi(:final usesExternalProvider) => usesExternalProvider,
+  _ => false,
+};
+
+/// 配置尚未就绪时显示普通错误，阻止网络请求及内部登录/会员引导。
+class UnavailableChatApi implements ChatApi, ExternalChatApi {
+  const UnavailableChatApi(this.message);
+  final String message;
+
+  @override
+  bool get usesExternalProvider => true;
+
+  @override
+  Stream<ChatTextFrame> streamChat({
+    required String endpoint,
+    required List<ChatMessage> history,
+    required Map<String, Object?> context,
+    required String followUpInstruction,
+    String? targetLanguage,
+    required String accessToken,
+    CancelToken? cancelToken,
+  }) => Stream.error(StateError(message));
+
+  @override
+  void dispose() {}
+}
+
 /// 通用聊天流式 API 客户端。
 class ChatApiClient implements ChatApi {
   final Dio _dio;

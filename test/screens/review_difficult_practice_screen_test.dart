@@ -48,7 +48,10 @@ import 'package:echo_loop/widgets/common/recording_button.dart';
 
 import '../helpers/mock_providers.dart';
 
-class _MockApiClient extends Mock implements SentenceAiApiClient {}
+class _MockApiClient extends Mock implements SentenceAiApiClient {
+  @override
+  bool get usesExternalProvider => false;
+}
 
 class _MockNotificationPermissionService extends Mock
     implements NotificationPermissionService {}

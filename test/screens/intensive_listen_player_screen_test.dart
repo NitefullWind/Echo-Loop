@@ -32,7 +32,10 @@ import 'package:echo_loop/widgets/practice/sentence_explanation_view.dart';
 
 import '../helpers/mock_providers.dart';
 
-class _MockApiClient extends Mock implements SentenceAiApiClient {}
+class _MockApiClient extends Mock implements SentenceAiApiClient {
+  @override
+  bool get usesExternalProvider => false;
+}
 
 /// 测试用 BookmarkDao
 class _TestBookmarkDao implements BookmarkDao {

@@ -9,18 +9,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../../providers/external_ai_settings_provider.dart';
 import '../../remote_config/remote_config.dart';
 import '../../remote_config/remote_config_providers.dart';
 import '../chatbot_flags.dart';
 import '../chatbot_sheet.dart';
 import '../models/chatbot_config.dart';
 
-/// AI 聊天入口显示规则：编译期开关负责硬停，远程开关负责运行期全球隐藏。
+/// 外部服务独立开放入口；Echo Loop 服务仍遵循编译与远程开关。
 bool shouldShowAiChatAssistantEntry({
   required bool chatbotEnabled,
   required bool remoteEnabled,
+  bool externalProviderConfigured = false,
 }) {
-  return chatbotEnabled && remoteEnabled;
+  return externalProviderConfigured || (chatbotEnabled && remoteEnabled);
 }
 
 /// 构造句子级聊天配置；AppBar 与文本选区入口必须复用同一会话身份。
@@ -70,8 +72,10 @@ class SentenceChatButton extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // 发布开关：编译期开关保留硬停能力，remote config 支持全球动态隐藏入口。
     final show = shouldShowAiChatAssistantEntry(
+      externalProviderConfigured: ref
+          .watch(externalAiSettingsProvider)
+          .isConfigured,
       chatbotEnabled: kChatbotEnabled,
       remoteEnabled: ref.watch(
         remoteFeatureEnabledProvider(RemoteFeature.aiChatAssistant),
@@ -89,10 +93,7 @@ class SentenceChatButton extends ConsumerWidget {
       tooltip: AppLocalizations.of(context)!.chatOpenTooltip,
       onPressed: () {
         onBeforeOpen?.call();
-        showSentenceChatbotSheet(
-          context: context,
-          sentenceText: sentenceText,
-        );
+        showSentenceChatbotSheet(context: context, sentenceText: sentenceText);
       },
     );
   }

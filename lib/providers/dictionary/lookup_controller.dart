@@ -12,6 +12,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../features/auth/providers/auth_providers.dart';
 import '../../features/subscription/models/ai_quota_rejection.dart';
+import '../external_ai_settings_provider.dart';
 import '../../features/usage/usage_event.dart';
 import '../../features/usage/usage_providers.dart';
 import '../../models/dictionary/dictionary_lookup_result.dart';
@@ -163,6 +164,17 @@ class DictionaryLookupController extends _$DictionaryLookupController {
 
   @override
   DictionaryLookupState build(String word, {String? preferredSourceId}) {
+    ref.listen(externalAiSettingsProvider, (previous, next) {
+      if (previous != null &&
+          !next.isLoading &&
+          (previous.provider != next.provider ||
+              previous.baseUrl != next.baseUrl ||
+              previous.model != next.model ||
+              previous.apiKey != next.apiKey ||
+              previous.loadError != next.loadError)) {
+        _invalidateAiSource();
+      }
+    });
     ref.onDispose(() {
       _disposed = true;
       // 取消在途请求（关闭面板即取消查询）：网页源（如 Cambridge）据此中断抓取；
@@ -245,6 +257,19 @@ class DictionaryLookupController extends _$DictionaryLookupController {
     }
   }
 
+  /// 服务切换时同时作废未选中的 AI 结果，避免切回词典页仍展示旧模型内容。
+  void _invalidateAiSource() {
+    const id = AiDictionarySource.sourceId;
+    if (state.selectedSourceId == id) {
+      _lookup(id);
+      return;
+    }
+    _tokens[id]?.cancel('AI provider changed');
+    _seq[id] = (_seq[id] ?? 0) + 1;
+    final remaining = {...state.bySource}..remove(id);
+    state = state.copyWith(bySource: remaining);
+  }
+
   /// 重试当前选中源
   void retry() => _lookup(state.selectedSourceId);
 
@@ -269,11 +294,17 @@ class DictionaryLookupController extends _$DictionaryLookupController {
 
     _setState(id, const LookupLoading());
 
-    final request = _buildRequest(
-      source,
-      accessTokenOverride: accessTokenOverride,
-    );
     try {
+      // 首次查询等待配置恢复；同服务的加载完成不能额外发起一次付费查询。
+      if (id == AiDictionarySource.sourceId &&
+          ref.read(externalAiSettingsProvider).isLoading) {
+        await ref.read(externalAiSettingsProvider.notifier).ready;
+        if (_dropResult(id, seq)) return;
+      }
+      final request = _buildRequest(
+        source,
+        accessTokenOverride: accessTokenOverride,
+      );
       if (source is AiDictionarySource) {
         // AI 源：流式逐帧渲染，完成后转 Loaded。每帧套用防竞态守卫。
         DictionaryLookupResult? last;

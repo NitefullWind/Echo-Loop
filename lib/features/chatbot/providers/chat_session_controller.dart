@@ -25,7 +25,8 @@ import '../../subscription/providers/subscription_controller.dart';
 import '../models/chat_message.dart';
 import '../models/chat_role.dart';
 import '../models/chatbot_config.dart';
-import '../services/chat_api_client.dart' show ChatAuthRequiredException;
+import '../services/chat_api_client.dart'
+    show ChatAuthRequiredException, ChatApi, usesExternalChat;
 import '../state/chat_session_state.dart';
 import 'chat_api_client_provider.dart';
 
@@ -53,6 +54,9 @@ class ChatSessionController extends _$ChatSessionController {
 
   @override
   ChatSessionState build(ChatbotConfig config) {
+    ref.listen(chatApiClientProvider, (previous, next) {
+      if (previous != null && previous != next) clear();
+    });
     ref.onDispose(() {
       _disposed = true;
       _inflight?.cancel(
@@ -141,22 +145,25 @@ class ChatSessionController extends _$ChatSessionController {
   /// 发起一轮（send/retry 共用）：闸门 → 追加 user+占位 → 流式。
   /// [quote] 为追问引用原文（可选），随 user 消息保存。
   Future<void> _startTurn(String userText, {String? quote}) async {
+    final client = ref.read(chatApiClientProvider);
+    final usesExternalProvider = usesExternalChat(client);
     // 1) 闸门（gate 是 banner 的唯一数据源）。
     //    注意：当前 freeAllowancePolicy 为 AlwaysAllowPolicy（恒放行），本地额度预测在
     //    现网是前向兼容的死分支；额度唯一权威是后端 402。
-    if (!ref.read(isAuthenticatedProvider)) {
+    //    用户自己的模型由其 API Key 鉴权，因此跳过 Echo Loop 登录和会员闸门。
+    if (!usesExternalProvider && !ref.read(isAuthenticatedProvider)) {
       state = state.copyWith(gate: ChatGate.authRequired);
       return;
     }
-    final accessToken = ref
-        .read(supabaseSessionProvider)
-        .valueOrNull
-        ?.accessToken;
-    if (accessToken == null || accessToken.isEmpty) {
+    final accessToken = usesExternalProvider
+        ? ''
+        : ref.read(supabaseSessionProvider).valueOrNull?.accessToken ?? '';
+    if (!usesExternalProvider && accessToken.isEmpty) {
       state = state.copyWith(gate: ChatGate.authRequired);
       return;
     }
-    if (!ref.read(featureAccessProvider(PremiumFeature.aiChat))) {
+    if (!usesExternalProvider &&
+        !ref.read(featureAccessProvider(PremiumFeature.aiChat))) {
       state = state.copyWith(gate: ChatGate.quotaExceeded);
       return;
     }
@@ -177,11 +184,11 @@ class ChatSessionController extends _$ChatSessionController {
       gate: ChatGate.none,
     );
 
-    await _run(botId, accessToken);
+    await _run(botId, accessToken, client);
   }
 
   /// 内部：发起并消费流式，防竞态守卫。只留 happy-path，异常映射在 [_mapRunError]。
-  Future<void> _run(String botId, String accessToken) async {
+  Future<void> _run(String botId, String accessToken, ChatApi client) async {
     final seq = ++_seq;
     _stopRequested = false;
     _inflight?.cancel('restart');
@@ -192,7 +199,6 @@ class ChatSessionController extends _$ChatSessionController {
       appSettingsProvider.select((s) => s.nativeLanguage),
     );
     final history = _buildHistory();
-    final client = ref.read(chatApiClientProvider);
     // 追问引用指令按界面语言本地化：界面语言未显式设置时回退到系统 locale 匹配，
     // 使指令语言与用户界面一致（英文指令会让模型倾向英文回答）。
     final uiLocale =
@@ -216,7 +222,7 @@ class ChatSessionController extends _$ChatSessionController {
         _updateBot(botId, frame.text); // 只改这条 assistant content
         if (frame.isFinal) {
           _finishTurn(botId, ChatMessageStatus.done);
-          _consumeTrial(); // 成功计一次（会员不计；本地预测计数，权威在后端）
+          if (!usesExternalChat(client)) _consumeTrial();
           return;
         }
       }
@@ -230,7 +236,11 @@ class ChatSessionController extends _$ChatSessionController {
       );
     } catch (e) {
       if (_disposed || seq != _seq) return;
-      final status = _mapRunError(e);
+      final status =
+          usesExternalChat(client) &&
+              !(e is DioException && e.type == DioExceptionType.cancel)
+          ? ChatMessageStatus.error
+          : _mapRunError(e);
       final quotaReason = _quotaReasonFor(e);
       // 用户主动取消（cancel→done）不算失败，不打 error 日志。
       if (status != ChatMessageStatus.done) {
