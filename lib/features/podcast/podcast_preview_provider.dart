@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart' show Ref;
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../services/refresh_coordinator.dart';
+import '../../services/app_logger.dart';
 import 'anti_bot_detector.dart';
 import 'podcast_feed_parser.dart';
 import 'podcast_models.dart';
@@ -113,27 +114,46 @@ class PodcastPreviewService {
     String inputUrl, {
     bool force = false,
   }) async {
-    final feedUrl = await _resolveFeedUrl(inputUrl);
-    final cached = _cacheByFeedUrl[feedUrl];
-    final result = await _refresh.run(
-      key: feedUrl,
-      force: force,
-      lastRefreshedAt: cached?.fetchedAt,
-      throttleWindow: _kPreviewRefreshWindow,
-      refresh: () async {
-        final data = await _fetchAndParse(feedUrl);
-        _cacheByFeedUrl[feedUrl] = _PodcastPreviewCacheEntry(
-          data: data,
-          fetchedAt: _now(),
-        );
-        return data;
-      },
+    AppLogger.log(
+      'PodcastPreview',
+      'preview start inputUrl=$inputUrl force=$force',
     );
-    return switch (result) {
-      RefreshThrottled<PodcastPreviewData>() =>
-        _cacheByFeedUrl[feedUrl]?.data ?? await _fetchAndParse(feedUrl),
-      RefreshCompleted<PodcastPreviewData>(:final result) => result,
-    };
+    try {
+      final feedUrl = await _resolveFeedUrl(inputUrl);
+      AppLogger.log('PodcastPreview', 'feed resolved url=$feedUrl');
+      final cached = _cacheByFeedUrl[feedUrl];
+      final result = await _refresh.run(
+        key: feedUrl,
+        force: force,
+        lastRefreshedAt: cached?.fetchedAt,
+        throttleWindow: _kPreviewRefreshWindow,
+        refresh: () async {
+          final data = await _fetchAndParse(feedUrl);
+          _cacheByFeedUrl[feedUrl] = _PodcastPreviewCacheEntry(
+            data: data,
+            fetchedAt: _now(),
+          );
+          return data;
+        },
+      );
+      final data = switch (result) {
+        RefreshThrottled<PodcastPreviewData>() =>
+          _cacheByFeedUrl[feedUrl]?.data ?? await _fetchAndParse(feedUrl),
+        RefreshCompleted<PodcastPreviewData>(:final result) => result,
+      };
+      AppLogger.log(
+        'PodcastPreview',
+        'preview success feedUrl=$feedUrl episodes=${data.episodes.length}',
+      );
+      return data;
+    } catch (error, stackTrace) {
+      AppLogger.log(
+        'PodcastPreview',
+        'preview failed inputUrl=$inputUrl force=$force error=$error',
+      );
+      AppLogger.log('PodcastPreview', stackTrace.toString());
+      rethrow;
+    }
   }
 
   Future<PodcastPreviewData> _fetchAndParse(String feedUrl) async {
@@ -146,9 +166,19 @@ class PodcastPreviewService {
       return PodcastPreviewData(meta: result.meta, episodes: result.episodes);
     } on PodcastPreviewException {
       rethrow;
-    } on PodcastParseException catch (e) {
+    } on PodcastParseException catch (e, stackTrace) {
+      AppLogger.log(
+        'PodcastPreview',
+        'rss parse failed feedUrl=$feedUrl error=$e',
+      );
+      AppLogger.log('PodcastPreview', stackTrace.toString());
       throw PodcastPreviewException(PodcastPreviewErrorKind.parseFailed, e);
-    } catch (e) {
+    } catch (e, stackTrace) {
+      AppLogger.log(
+        'PodcastPreview',
+        'rss parse failed feedUrl=$feedUrl error=$e',
+      );
+      AppLogger.log('PodcastPreview', stackTrace.toString());
       throw PodcastPreviewException(PodcastPreviewErrorKind.parseFailed, e);
     }
   }
@@ -168,11 +198,19 @@ class PodcastPreviewService {
 
   Future<String> _fetchFeedContent(String feedUrl) async {
     try {
+      AppLogger.log('PodcastPreview', 'rss request → GET $feedUrl');
       final response = await _dio.get<String>(
         feedUrl,
         options: Options(responseType: ResponseType.plain),
       );
       final content = response.data;
+      AppLogger.log(
+        'PodcastPreview',
+        'rss response ← GET ${response.realUri} '
+            '${response.statusCode ?? "(null)"} '
+            'contentType=${response.headers.value("content-type") ?? "(null)"} '
+            'bytes=${content?.length ?? 0}',
+      );
       if (content == null || content.isEmpty) {
         throw const PodcastPreviewException(PodcastPreviewErrorKind.emptyFeed);
       }
@@ -187,9 +225,20 @@ class PodcastPreviewService {
       return content;
     } on PodcastPreviewException {
       rethrow;
-    } on DioException catch (e) {
+    } on DioException catch (e, stackTrace) {
+      AppLogger.log(
+        'PodcastPreview',
+        'rss request failed feedUrl=$feedUrl type=${e.type} '
+            'status=${e.response?.statusCode ?? "(null)"} error=$e',
+      );
+      AppLogger.log('PodcastPreview', stackTrace.toString());
       throw PodcastPreviewException(_kindForDio(e), e);
-    } catch (e) {
+    } catch (e, stackTrace) {
+      AppLogger.log(
+        'PodcastPreview',
+        'rss request failed feedUrl=$feedUrl error=$e',
+      );
+      AppLogger.log('PodcastPreview', stackTrace.toString());
       throw PodcastPreviewException(PodcastPreviewErrorKind.rssUnavailable, e);
     }
   }

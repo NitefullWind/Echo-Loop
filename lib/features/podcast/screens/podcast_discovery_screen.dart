@@ -112,7 +112,8 @@ class _PodcastDiscoveryScreenState
                 controller: _searchController,
                 autofocus: false,
                 style: compactFormTextStyle(context),
-                keyboardType: TextInputType.url,
+                // 搜索词通常包含空格；RSS 链接仍可直接粘贴并由下方逻辑识别。
+                keyboardType: TextInputType.text,
                 textInputAction: TextInputAction.search,
                 decoration: compactFormInputDecoration(
                   context,

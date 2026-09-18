@@ -6,7 +6,8 @@ import 'package:echo_loop/features/podcast/podcast_url_resolver.dart';
 import 'package:echo_loop/features/podcast/screens/podcast_preview_screen.dart';
 import 'package:echo_loop/models/collection.dart';
 import 'package:echo_loop/providers/collection_provider.dart';
-import 'package:flutter/widgets.dart';
+import 'package:echo_loop/services/app_logger.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../helpers/mock_providers.dart';
@@ -57,6 +58,19 @@ const _rss = '''<?xml version="1.0" encoding="UTF-8"?>
   </channel>
 </rss>''';
 
+const _rssWithChallengePhrase = '''<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>Bob's Short English Lessons</title>
+    <item>
+      <guid>ep-just-a-moment</guid>
+      <title>Just a moment</title>
+      <description><![CDATA[Just a moment is an ordinary English phrase.]]></description>
+      <enclosure url="https://example.com/just-a-moment.mp3" type="audio/mpeg"/>
+    </item>
+  </channel>
+</rss>''';
+
 const _feedUrl = 'https://example.com/rss';
 
 PodcastPreviewService _service(_FakeDio dio, {DateTime Function()? now}) {
@@ -98,6 +112,15 @@ void main() {
       expect(data.episodes.single.durationSeconds, 360);
     });
 
+    test('RSS 正文含反爬特征短语时仍解析预览', () async {
+      final data = await _service(
+        _FakeDio(body: _rssWithChallengePhrase),
+      ).fetchByUrl(_feedUrl);
+
+      expect(data.meta.title, "Bob's Short English Lessons");
+      expect(data.episodes.single.guid, 'ep-just-a-moment');
+    });
+
     test('10 分钟内复用同一 feedUrl 的预览缓存', () async {
       var now = DateTime(2026, 6, 14, 12);
       final dio = _FakeDio(body: _rss);
@@ -130,6 +153,7 @@ void main() {
     });
 
     test('网络错误映射为 preview exception', () async {
+      AppLogger.instance.clear();
       final dio = _FakeDio(
         body: '',
         error: DioException(
@@ -148,10 +172,49 @@ void main() {
           ),
         ),
       );
+
+      expect(
+        AppLogger.instance.entries.map((entry) => entry.message),
+        contains(allOf(contains('rss request failed'), contains(_feedUrl))),
+      );
     });
   });
 
   group('PodcastPreviewScreen', () {
+    testWidgets('失败后重试只发起一次强制请求', (tester) async {
+      final dio = _FakeDio(
+        body: _rss,
+        error: DioException(
+          requestOptions: RequestOptions(path: _feedUrl),
+          type: DioExceptionType.connectionError,
+        ),
+      );
+      await tester.pumpWidget(
+        createTestApp(
+          const PodcastPreviewScreen(
+            arg: PodcastPreviewArg(
+              title: '6 Minute English',
+              feedUrl: _feedUrl,
+            ),
+          ),
+          overrides: [
+            collectionListProvider.overrideWith(() => TestCollectionList()),
+            podcastPreviewDioProvider.overrideWithValue(dio),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(dio.callCount, 1);
+      dio.error = null;
+
+      await tester.tap(find.byType(TextButton));
+      await tester.pumpAndSettle();
+
+      expect(dio.callCount, 2);
+      expect(find.text('Episode One'), findsOneWidget);
+    });
+
     testWidgets('点击 episode 打开单集详情弹窗', (tester) async {
       await tester.pumpWidget(
         createTestApp(

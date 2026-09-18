@@ -39,6 +39,19 @@ void main() {
       );
     });
 
+    test('RSS 正文含 Cloudflare 特征短语时不误判', () {
+      const body =
+          '<?xml version="1.0"?><rss version="2.0"><channel>'
+          '<title>Demo</title><item><guid>1</guid>'
+          '<description><![CDATA[Just a moment, please.]]></description>'
+          '<enclosure url="https://a.com/1.mp3" type="audio/mpeg"/>'
+          '</item></channel></rss>';
+      expect(
+        isAntiBotChallenge(contentType: 'application/rss+xml', body: body),
+        isFalse,
+      );
+    });
+
     test('Atom feed 不误判', () {
       const body =
           '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">'

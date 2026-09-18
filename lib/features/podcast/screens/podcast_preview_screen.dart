@@ -16,6 +16,7 @@ import '../../../l10n/app_localizations.dart';
 import '../../../models/collection.dart';
 import '../../../providers/collection_provider.dart';
 import '../../../router/app_router.dart';
+import '../../../services/app_logger.dart';
 import '../../../theme/app_theme.dart';
 import '../../auth/sign_in_required_dialog.dart';
 import '../podcast_info_sheet.dart';
@@ -134,13 +135,19 @@ class _PodcastPreviewScreenState extends ConsumerState<PodcastPreviewScreen> {
           .read(podcastPreviewServiceProvider)
           .fetchByUrl(_inputUrl, force: true);
     } catch (_) {
-      // 错误由 AsyncValue 渲染为页面内错误卡；刷新手势本身不抛出。
+      // 服务层已记录失败原因；保留当前 error state，避免失败后再发一次默认请求。
+      return;
     }
     ref.invalidate(podcastPreviewProvider(_inputUrl));
     try {
       await ref.read(podcastPreviewProvider(_inputUrl).future);
-    } catch (_) {
-      // provider 的错误态由 build 渲染。
+    } catch (error, stackTrace) {
+      // 强制请求成功后此处应复用刚写入的缓存；若仍失败，保留诊断证据。
+      AppLogger.log(
+        'PodcastPreview',
+        'preview cache publish failed inputUrl=$_inputUrl error=$error',
+      );
+      AppLogger.log('PodcastPreview', stackTrace.toString());
     }
   }
 

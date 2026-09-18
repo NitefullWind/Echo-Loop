@@ -23,10 +23,17 @@ const _challengeMarkers = <String>[
 
 /// 判断 [body] 是否为反爬/人机验证挑战页而非真正的 RSS/Atom feed。
 ///
-/// 命中任一已知特征关键字，或「看起来是 HTML 文档但不含任何 feed 根元素」时
-/// 判定为挑战页。[contentType] 取自响应头，用于辅助判断是否为 HTML。
+/// 有 feed 根元素的响应优先视为合法 feed：节目正文可能自然出现反爬关键词。
+/// 其余响应命中已知特征关键字，或「看起来是 HTML 文档但不含任何 feed 根元素」
+/// 时判定为挑战页。[contentType] 取自响应头，用于辅助判断是否为 HTML。
 bool isAntiBotChallenge({String? contentType, required String body}) {
   final lower = body.toLowerCase();
+  final hasFeedRoot =
+      lower.contains('<rss') ||
+      lower.contains('<feed') ||
+      lower.contains('<channel');
+  if (hasFeedRoot) return false;
+
   if (_challengeMarkers.any(lower.contains)) return true;
 
   final trimmed = lower.trimLeft();
@@ -34,9 +41,5 @@ bool isAntiBotChallenge({String? contentType, required String body}) {
       (contentType?.toLowerCase().contains('text/html') ?? false) ||
       trimmed.startsWith('<!doctype html') ||
       trimmed.startsWith('<html');
-  final hasFeedRoot =
-      lower.contains('<rss') ||
-      lower.contains('<feed') ||
-      lower.contains('<channel');
-  return looksHtml && !hasFeedRoot;
+  return looksHtml;
 }

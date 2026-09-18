@@ -89,6 +89,20 @@ void main() {
     expect(editableText.focusNode.hasFocus, isFalse);
   });
 
+  testWidgets('搜索框使用普通文本键盘并保留搜索提交动作', (tester) async {
+    await tester.pumpWidget(
+      createTestApp(
+        const PodcastDiscoveryScreen(),
+        overrides: [discoverPodcastsProvider.overrideWith((ref) => const [])],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.keyboardType, TextInputType.text);
+    expect(field.textInputAction, TextInputAction.search);
+  });
+
   testWidgets('聚焦搜索框后点击页面其他区域会释放焦点', (tester) async {
     await tester.pumpWidget(
       createTestApp(
