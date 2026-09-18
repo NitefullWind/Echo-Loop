@@ -88,7 +88,8 @@ jobs:
         run: |
           flutter build apk --release --flavor=dev \
             --target-platform android-arm64 \
-            --build-number="$BUILD_NUMBER"
+            --build-number="$BUILD_NUMBER" \
+            --dart-define=EXTERNAL_SERVICES_ONLY=true
 
       - name: Prepare download
         env:

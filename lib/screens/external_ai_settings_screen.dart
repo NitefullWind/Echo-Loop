@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/external_ai_settings_provider.dart';
+import '../config/external_services_config.dart';
 import '../l10n/app_localizations.dart';
 
 /// 配置用户自己的 OpenAI-compatible 模型服务。
@@ -22,7 +23,9 @@ class _ExternalAiSettingsScreenState
   late final TextEditingController _modelController;
   late final TextEditingController _apiKeyController;
   late final ProviderSubscription<ExternalAiSettings> _settingsSubscription;
-  ExternalAiProvider _provider = ExternalAiProvider.echoLoop;
+  ExternalAiProvider _provider = externalServicesOnly
+      ? ExternalAiProvider.custom
+      : ExternalAiProvider.echoLoop;
   bool _obscureApiKey = true;
   bool _saving = false;
   bool _dirty = false;
@@ -57,7 +60,11 @@ class _ExternalAiSettingsScreenState
       return;
     }
     setState(() {
-      _provider = settings.provider;
+      _provider =
+          externalServicesOnly &&
+              settings.provider == ExternalAiProvider.echoLoop
+          ? ExternalAiProvider.custom
+          : settings.provider;
       _baseUrlController.text = settings.baseUrl;
       _modelController.text = settings.model;
       _apiKeyController.clear();
@@ -166,7 +173,11 @@ class _ExternalAiSettingsScreenState
             initialValue: _provider,
             decoration: InputDecoration(labelText: copy.externalAiProvider),
             items: [
-              for (final provider in ExternalAiProvider.values)
+              for (final provider in ExternalAiProvider.values.where(
+                (value) =>
+                    !externalServicesOnly ||
+                    value != ExternalAiProvider.echoLoop,
+              ))
                 DropdownMenuItem(
                   value: provider,
                   child: Text(
@@ -254,4 +265,11 @@ class _ExternalAiSettingsScreenState
       ),
     );
   }
+}
+
+/// 独立模式未配置服务时统一打开设置，避免进入官方登录流程。
+Future<void> openExternalAiSettings(BuildContext context) async {
+  await Navigator.of(context).push<void>(
+    MaterialPageRoute(builder: (_) => const ExternalAiSettingsScreen()),
+  );
 }

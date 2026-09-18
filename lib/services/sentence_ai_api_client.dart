@@ -15,6 +15,7 @@ import 'package:universal_io/io.dart';
 
 import '../analytics/geo_interceptor.dart';
 import '../config/api_config.dart';
+import '../config/external_services_config.dart';
 import '../features/auth/providers/auth_providers.dart';
 import '../providers/package_info_provider.dart';
 import 'ai_http_client_adapter.dart';
@@ -834,11 +835,17 @@ SentenceAiApiClient sentenceAiApiClient(Ref ref) {
     baseUrl: apiBaseUrl,
     appVersion: readAppVersion(ref),
     tokenCoordinator:
-        settings.configOrNull == null && settings.requestError == null
+        !externalServicesOnly &&
+            settings.configOrNull == null &&
+            settings.requestError == null
         ? ref.read(supabaseTokenCoordinatorProvider)
         : null,
     externalConfig: settings.configOrNull,
-    configurationError: settings.requestError,
+    configurationError:
+        settings.requestError ??
+        (externalServicesOnly && settings.configOrNull == null
+            ? '请先在设置中配置外部文本 AI'
+            : null),
   );
   ref.onDispose(client.dispose);
   return client;

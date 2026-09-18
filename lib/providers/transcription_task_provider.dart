@@ -14,13 +14,19 @@ import '../features/usage/usage_event.dart';
 import '../features/usage/usage_providers.dart';
 import '../utils/app_data_dir.dart';
 import 'package:universal_io/io.dart';
-import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../database/providers.dart';
 import '../features/audio_import/audio_finalization_service.dart';
 import '../features/audio_import/audio_transcode_service.dart';
 import '../features/audio_import/transcription_audio_extractor.dart';
 import '../features/remote_config/remote_config_providers.dart';
+import '../config/external_services_config.dart';
+import '../providers/external_speech_client_provider.dart';
+import 'external_speech_settings_provider.dart';
+import 'local_transcription_task_provider.dart' show mergeShortAsrSegments;
+import '../services/asr/offline_asr_engine.dart' show AsrSegment;
+import '../services/external_speech_client.dart';
 import '../features/subscription/providers/subscription_controller.dart'
     show entitlementQuotaDivergenceHandlerProvider;
 import '../features/subscription/models/ai_quota_rejection.dart';
@@ -117,7 +123,13 @@ class TranscriptionCompleted extends TranscriptionTaskState {
 class TranscriptionFailed extends TranscriptionTaskState {
   /// 错误信息
   final String message;
-  const TranscriptionFailed({required this.message});
+
+  /// 外部适配器已脱敏的错误可直接展示，官方错误继续按错误码本地化。
+  final bool isExternalServiceError;
+  const TranscriptionFailed({
+    required this.message,
+    this.isExternalServiceError = false,
+  });
 }
 
 /// 转录成功但无语音内容（音乐/背景音）
@@ -147,9 +159,38 @@ class TranscriptionTaskManager extends _$TranscriptionTaskManager {
   /// 各任务的 CancelToken
   final Map<String, CancelToken> _cancelTokens = {};
   final _uuid = const Uuid();
+  var _disposed = false;
 
   @override
-  Map<String, TranscriptionTaskState> build() => {};
+  Map<String, TranscriptionTaskState> build() {
+    _disposed = false;
+    ref.onDispose(() {
+      _disposed = true;
+      for (final token in _cancelTokens.values) {
+        token.cancel();
+      }
+      _cancelTokens.clear();
+    });
+    ref.listen(externalSpeechSettingsProvider, (previous, next) {
+      if (previous == null || previous.isLoading) return;
+      for (final id in _cancelTokens.keys.toList()) {
+        cancelTranscription(id);
+      }
+    });
+    ref.listen(audioLibraryProvider, (previous, next) {
+      final ids = next.audioItems.map((item) => item.id).toSet();
+      for (final id in _cancelTokens.keys.toList()) {
+        if (!ids.contains(id)) cancelTranscription(id);
+      }
+    });
+    return {};
+  }
+
+  /// 任务所有权同时绑定 token 与材料，防止取消/重试的旧回调写回新任务。
+  bool _isCurrent(String audioId, CancelToken token) =>
+      !_disposed &&
+      !token.isCancelled &&
+      identical(_cancelTokens[audioId], token);
 
   /// 获取指定音频的任务状态
   TranscriptionTaskState getTaskState(String audioId) {
@@ -182,12 +223,29 @@ class TranscriptionTaskManager extends _$TranscriptionTaskManager {
 
     final cancelToken = CancelToken();
     _cancelTokens[audioId] = cancelToken;
+    _updateState(audioId, const TranscriptionHashing());
 
     // 上传压缩和视频抽音轨均可能产生临时文件，结束后统一清理。
     File? temporaryUploadFile;
     String? tempAudioPath;
 
     try {
+      final externalSpeech = ref.read(externalSpeechClientProvider);
+      if (externalServicesOnly || externalSpeech != null) {
+        await _runExternalTranscription(
+          audioItem: audioItem,
+          language: language,
+          cancelToken: cancelToken,
+          client: externalSpeech,
+          autoMergeShortSentences: autoMergeShortSentences,
+        );
+        return;
+      }
+      final token = accessToken;
+      if (token.isEmpty) {
+        _updateState(audioId, const TranscriptionFailed(message: 'auth'));
+        return;
+      }
       final api = ref.read(transcriptionApiClientProvider);
       final fileOps = ref.read(transcriptionFileOpsProvider);
 
@@ -281,7 +339,7 @@ class TranscriptionTaskManager extends _$TranscriptionTaskManager {
         sha256: transcriptionSha256,
         mimeType: mimeType,
         fileSize: fileSize,
-        accessToken: accessToken,
+        accessToken: token,
       );
 
       if (cancelToken.isCancelled) return;
@@ -317,7 +375,7 @@ class TranscriptionTaskManager extends _$TranscriptionTaskManager {
         mimeType: mimeType,
         fileSize: fileSize,
         language: language,
-        accessToken: accessToken,
+        accessToken: token,
         mergeSentences: autoMergeShortSentences,
       );
 
@@ -349,7 +407,7 @@ class TranscriptionTaskManager extends _$TranscriptionTaskManager {
         transcriptionSha256,
         finalAudioSha256,
         language,
-        accessToken,
+        token,
         cancelToken,
         autoMergeShortSentences,
       );
@@ -394,6 +452,138 @@ class TranscriptionTaskManager extends _$TranscriptionTaskManager {
         }
       }
     }
+  }
+
+  /// 使用用户配置的语音服务完成转录，不上传到 Echo Loop 后端。
+  Future<void> _runExternalTranscription({
+    required AudioItem audioItem,
+    required String language,
+    required CancelToken cancelToken,
+    required ExternalSpeechClient? client,
+    required bool autoMergeShortSentences,
+  }) async {
+    final audioId = audioItem.id;
+    if (client == null) {
+      _updateState(
+        audioId,
+        const TranscriptionFailed(message: 'speechNotConfigured'),
+      );
+      return;
+    }
+    File? temporaryAudio;
+    try {
+      final fileOps = ref.read(transcriptionFileOpsProvider);
+      final dataDir = await fileOps.getDataDir();
+      if (!_isCurrent(audioId, cancelToken)) return;
+      final path = audioItem.audioPath;
+      if (path == null || path.isEmpty) {
+        throw const ExternalSpeechException('音频文件已不存在');
+      }
+      final sourcePath = p.isAbsolute(path) ? path : p.join(dataDir.path, path);
+      var uploadFile = File(sourcePath);
+      if (audioItem.isVideo) {
+        final extracted = await ref
+            .read(transcriptionAudioExtractorProvider)
+            .extractAudioTrack(dataDir: dataDir, videoAbsolutePath: sourcePath);
+        if (extracted != null) {
+          temporaryAudio = File(extracted);
+          uploadFile = temporaryAudio;
+        }
+      }
+      if (!_isCurrent(audioId, cancelToken)) return;
+      if (!await uploadFile.exists()) {
+        _updateState(
+          audioId,
+          const TranscriptionFailed(message: 'audioNotFound'),
+        );
+        return;
+      }
+      if (!_isCurrent(audioId, cancelToken)) return;
+      _updateState(audioId, const TranscriptionUploading());
+      final transcript = await client.transcribe(
+        audioFile: uploadFile,
+        language: language,
+        cancelToken: cancelToken,
+        onProgress: (progress) {
+          if (_isCurrent(audioId, cancelToken)) {
+            _updateState(
+              audioId,
+              TranscriptionUploading(progress: progress.clamp(0, 1)),
+            );
+          }
+        },
+      );
+      if (!_isCurrent(audioId, cancelToken)) return;
+      final sha256 =
+          audioItem.audioSha256 ?? await fileOps.computeSha256(sourcePath);
+      if (!_isCurrent(audioId, cancelToken)) return;
+      await _saveTranscriptAndFinish(
+        audioItem,
+        autoMergeShortSentences
+            ? _mergeExternalSentences(transcript)
+            : transcript,
+        language,
+        sha256,
+        cancelToken: cancelToken,
+      );
+    } on ExternalSpeechException catch (error) {
+      if (_isCurrent(audioId, cancelToken)) {
+        AppLogger.log('Transcription', '外部语音服务失败: ${error.message}');
+        _updateState(
+          audioId,
+          TranscriptionFailed(
+            message: error.message,
+            isExternalServiceError: true,
+          ),
+        );
+      }
+    } catch (error, stackTrace) {
+      if (_isCurrent(audioId, cancelToken)) {
+        AppLogger.log('Transcription', '外部转录失败: $error\n$stackTrace');
+        _updateState(audioId, const TranscriptionFailed(message: 'unknown'));
+      }
+    } finally {
+      if (identical(_cancelTokens[audioId], cancelToken)) {
+        _cancelTokens.remove(audioId);
+      }
+      if (temporaryAudio != null) {
+        try {
+          if (await temporaryAudio.exists()) await temporaryAudio.delete();
+        } catch (_) {
+          AppLogger.log('Transcription', '外部转录临时音频清理失败');
+        }
+      }
+    }
+  }
+
+  /// 复用离线转录的短句合并规则，并保留云服务提供的真实词索引。
+  TranscriptResult _mergeExternalSentences(TranscriptResult transcript) {
+    final merged = mergeShortAsrSegments([
+      for (final sentence in transcript.sentences)
+        AsrSegment(
+          text: sentence.text,
+          start: sentence.startTime,
+          end: sentence.endTime,
+        ),
+    ]);
+    return TranscriptResult(
+      fullText: transcript.fullText,
+      words: transcript.words,
+      sentences: [
+        for (final segment in merged)
+          TranscriptSentence(
+            text: segment.text,
+            startTime: segment.start,
+            endTime: segment.end,
+            startWordIndex: transcript.sentences
+                .firstWhere((s) => s.startTime == segment.start)
+                .startWordIndex,
+            endWordIndex: transcript.sentences
+                .lastWhere((s) => s.endTime == segment.end)
+                .endWordIndex,
+          ),
+      ],
+    );
   }
 
   /// 取消转录任务
@@ -524,8 +714,12 @@ class TranscriptionTaskManager extends _$TranscriptionTaskManager {
     AudioItem audioItem,
     TranscriptResult transcript,
     String language,
-    String sha256,
-  ) async {
+    String sha256, {
+    CancelToken? cancelToken,
+  }) async {
+    bool current() =>
+        cancelToken == null || _isCurrent(audioItem.id, cancelToken);
+    if (!current()) return;
     // 转录结果为空（音频无人声），不保存 SRT，提示用户
     if (transcript.sentences.isEmpty) {
       _cancelTokens.remove(audioItem.id);
@@ -537,8 +731,10 @@ class TranscriptionTaskManager extends _$TranscriptionTaskManager {
       audioItem,
       transcript,
     );
+    if (!current()) return;
     final srtContent = generateSrtContent(alignedSentences);
     final stats = await getTranscriptStatsFromSrt(srtContent);
+    if (!current()) return;
 
     // ── 转码（best-effort）──
     // 新流程：导入保留原始音频，转录上传原始；拿到字幕后顺带把原始转码为 m4a。
@@ -580,6 +776,7 @@ class TranscriptionTaskManager extends _$TranscriptionTaskManager {
       }
     }
 
+    if (!current()) return;
     // 字幕内容 + 词级时间戳原子写入 DB（transcript_srt 列成为唯一真相源）
     final wordsJson = (transcript.words != null && transcript.words!.isNotEmpty)
         ? encodeWordTimestamps(transcript.words!)
@@ -592,11 +789,13 @@ class TranscriptionTaskManager extends _$TranscriptionTaskManager {
         wordTimestampsJson: wordsJson,
       );
     } catch (e) {
-      debugPrint('保存字幕内容失败: $e');
+      AppLogger.log('Transcription', '保存字幕内容失败: $e');
+      rethrow;
     }
 
     // 更新 AudioItem 模型列（transcriptPath 置 null，内容在 DB 列）
-    ref
+    if (!current()) return;
+    await ref
         .read(audioLibraryProvider.notifier)
         .updateAudioItem(
           audioItem.copyWith(
@@ -633,7 +832,9 @@ class TranscriptionTaskManager extends _$TranscriptionTaskManager {
       }
     }
 
-    _updateState(audioItem.id, const TranscriptionCompleted());
+    if (!current()) return;
+    const completed = TranscriptionCompleted();
+    _updateState(audioItem.id, completed);
     _cancelTokens.remove(audioItem.id);
     ref
         .read(usageTrackerProvider)
@@ -647,7 +848,7 @@ class TranscriptionTaskManager extends _$TranscriptionTaskManager {
 
     // 10 秒后自动清理 completed 状态，避免内存累积
     Future.delayed(const Duration(seconds: 10), () {
-      if (state[audioItem.id] is TranscriptionCompleted) {
+      if (!_disposed && identical(state[audioItem.id], completed)) {
         clearState(audioItem.id);
       }
     });

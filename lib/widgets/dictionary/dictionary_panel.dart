@@ -16,6 +16,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/auth/sign_in_required_dialog.dart';
+import '../../config/external_services_config.dart';
+import '../../screens/external_ai_settings_screen.dart';
 import '../../features/subscription/widgets/feature_gate.dart';
 import '../../models/dictionary/dict_speakable_texts.dart';
 import '../../models/pronunciation/pronunciation_clip.dart';
@@ -351,6 +353,10 @@ class _DictionaryPanelState extends ConsumerState<DictionaryPanel> {
 
   /// 显式登录按钮直接打开登录页；认证完成后当前查词会自动续跑。
   void _openAiSignInPage() {
+    if (externalServicesOnly) {
+      openExternalAiSettings(context);
+      return;
+    }
     openSignInPage(context);
   }
 

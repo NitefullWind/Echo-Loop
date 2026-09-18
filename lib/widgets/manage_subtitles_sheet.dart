@@ -18,6 +18,9 @@ import '../features/subscription/providers/feature_access_provider.dart';
 import '../features/subscription/providers/subscription_controller.dart';
 import '../features/subscription/widgets/ai_quota_exceeded_dialog.dart';
 import '../features/remote_config/remote_config_providers.dart';
+import '../config/external_services_config.dart';
+import '../providers/external_speech_settings_provider.dart';
+import '../screens/external_speech_settings_screen.dart';
 import '../features/usage/usage_event.dart';
 import '../features/usage/usage_providers.dart';
 import '../models/audio_item.dart';
@@ -553,7 +556,9 @@ class _ManageSubtitlesSheetState extends ConsumerState<ManageSubtitlesSheet> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.m),
               child: Text(
-                _localizedErrorMessage(l10n, taskState.message),
+                taskState.isExternalServiceError
+                    ? taskState.message
+                    : _localizedErrorMessage(l10n, taskState.message),
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
@@ -579,6 +584,7 @@ class _ManageSubtitlesSheetState extends ConsumerState<ManageSubtitlesSheet> {
       'audioExpired' => l10n.transcriptionErrorAudioExpired,
       'requestInvalid' => l10n.transcriptionErrorRequestInvalid,
       'apiDeprecated' => l10n.transcriptionErrorApiDeprecated,
+      'speechNotConfigured' => '请先在设置中配置外部语音服务',
       _ => l10n.transcriptionErrorUnknown,
     };
   }
@@ -1765,24 +1771,41 @@ class _ManageSubtitlesSheetState extends ConsumerState<ManageSubtitlesSheet> {
     AudioItem audioItem,
   ) async {
     final l10n = AppLocalizations.of(context)!;
-    final accessToken = (await ref.read(
-      supabaseSessionProvider.future,
-    ))?.accessToken;
+    await ref.read(externalSpeechSettingsProvider.notifier).ready;
+    if (!mounted) return;
+    final speechSettings = ref.read(externalSpeechSettingsProvider);
+    final useExternalSpeech =
+        externalServicesOnly ||
+        speechSettings.config.provider != ExternalSpeechProvider.disabled ||
+        speechSettings.loadError != null;
+    final accessToken = useExternalSpeech
+        ? null
+        : (await ref.read(supabaseSessionProvider.future))?.accessToken;
     if (!mounted || !context.mounted) return;
-    if (accessToken == null || accessToken.isEmpty) {
+    if (useExternalSpeech && !speechSettings.isConfigured) {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const ExternalSpeechSettingsScreen(),
+        ),
+      );
+      return;
+    }
+    if (!useExternalSpeech && (accessToken == null || accessToken.isEmpty)) {
       await _showTranscriptionSignInDialog(context);
       return;
     }
-    // 已登录但未解锁（非会员且 AI 转录试用用尽）→ 先明确提示额度。
-    if (!ref.read(featureAccessProvider(PremiumFeature.aiTranscription))) {
+    // 官方模式仍由登录与会员额度控制；独立模式由用户自己的语音服务计费。
+    if (!useExternalSpeech &&
+        !ref.read(featureAccessProvider(PremiumFeature.aiTranscription))) {
       await _showAiTranscriptionQuotaDialog();
       return;
     }
 
-    final limits = ref.read(remoteTranscriptionLimitsProvider);
-
-    // 检查时长限制
-    if (audioItem.totalDuration > limits.maxDurationSeconds) {
+    // 外部语音按服务商自身限制校验，不读取官方会员时长额度。
+    final limits = useExternalSpeech
+        ? null
+        : ref.read(remoteTranscriptionLimitsProvider);
+    if (limits != null && audioItem.totalDuration > limits.maxDurationSeconds) {
       _showInlineError(
         _InlineError(
           _UploadErrorKind.generic,
@@ -1837,7 +1860,8 @@ class _ManageSubtitlesSheetState extends ConsumerState<ManageSubtitlesSheet> {
     }
 
     // 消耗一次免费试用（会员无限不计数）。转录为后台任务，于发起时计数。
-    if (!ref.read(subscriptionControllerProvider).isActive) {
+    if (!useExternalSpeech &&
+        !ref.read(subscriptionControllerProvider).isActive) {
       ref
           .read(aiTrialUsageProvider.notifier)
           .consume(PremiumFeature.aiTranscription);
@@ -1849,7 +1873,7 @@ class _ManageSubtitlesSheetState extends ConsumerState<ManageSubtitlesSheet> {
         .startTranscription(
           audioItem,
           _selectedLanguage,
-          accessToken: accessToken,
+          accessToken: accessToken ?? '',
           autoMergeShortSentences: _autoMergeShortSentences,
         );
     ref

@@ -9,6 +9,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../../config/external_services_config.dart';
+import '../../../screens/external_ai_settings_screen.dart';
 import '../../../providers/external_ai_settings_provider.dart';
 import '../../remote_config/remote_config.dart';
 import '../../remote_config/remote_config_providers.dart';
@@ -22,7 +24,9 @@ bool shouldShowAiChatAssistantEntry({
   required bool remoteEnabled,
   bool externalProviderConfigured = false,
 }) {
-  return externalProviderConfigured || (chatbotEnabled && remoteEnabled);
+  return externalServicesOnly ||
+      externalProviderConfigured ||
+      (chatbotEnabled && remoteEnabled);
 }
 
 /// 构造句子级聊天配置；AppBar 与文本选区入口必须复用同一会话身份。
@@ -45,6 +49,13 @@ Future<void> showSentenceChatbotSheet({
   required String sentenceText,
   String? initialQuote,
 }) {
+  if (externalServicesOnly &&
+      !ProviderScope.containerOf(
+        context,
+        listen: false,
+      ).read(externalAiSettingsProvider).isConfigured) {
+    return openExternalAiSettings(context);
+  }
   return showChatbotSheet(
     context: context,
     config: sentenceChatbotConfig(context, sentenceText),

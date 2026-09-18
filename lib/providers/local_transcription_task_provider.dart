@@ -334,7 +334,6 @@ const _mergeMinTargetSeconds = 4;
 /// 单个本就较长（≥下限）的段保持不动、绝不拆分；合并只发生在相邻短段之间。
 /// 文本按空格拼接（VAD 段为独立语音区间，英文以空格连接自然）；区间取并集。
 /// 空列表原样返回。
-@visibleForTesting
 List<AsrSegment> mergeShortAsrSegments(List<AsrSegment> segments) {
   if (segments.length <= 1) return segments;
 

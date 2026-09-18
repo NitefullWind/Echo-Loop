@@ -3,6 +3,11 @@
 // 测试转录任务的完整生命周期、状态转换、错误处理和取消逻辑。
 // 通过 mock TranscriptionApiClient 和 TranscriptionFileOps 避免真实 I/O。
 import 'dart:io';
+import 'dart:async';
+import 'package:echo_loop/services/external_speech_client.dart';
+import 'package:echo_loop/providers/external_speech_client_provider.dart';
+import 'package:echo_loop/providers/external_speech_settings_provider.dart';
+import 'package:path/path.dart' as p;
 
 import 'package:dio/dio.dart';
 import 'package:drift/drift.dart' show Value;
@@ -128,9 +133,12 @@ ProviderContainer _createContainer({
   AudioFinalizationService? finalizationService,
   TranscriptionAudioExtractor? audioExtractor,
   List<AudioItem>? audioItems,
+  ExternalSpeechClient? externalClient,
   void Function(String context)? quotaDivergenceHandler,
 }) {
   final overrides = <Override>[
+    externalSpeechSettingsProvider.overrideWith(_FixedSpeechSettings.new),
+    externalSpeechClientProvider.overrideWithValue(externalClient),
     transcriptionApiClientProvider.overrideWithValue(mockApi),
     transcriptionFileOpsProvider.overrideWithValue(mockFileOps),
     appDatabaseProvider.overrideWithValue(database),
@@ -191,6 +199,34 @@ Future<void> _seedAudioRows(
   }
 }
 
+class _FixedSpeechSettings extends ExternalSpeechSettingsController {
+  @override
+  ExternalSpeechSettings build() => const ExternalSpeechSettings();
+}
+
+/// 可控的识别请求允许测试迟到回调，无需任意延时。
+class _ControlledSpeech implements ExternalSpeechClient {
+  final results = <Completer<TranscriptResult>>[];
+  final progress = <void Function(double)?>[];
+  final started = [Completer<void>(), Completer<void>()];
+  @override
+  Future<TranscriptResult> transcribe({
+    required File audioFile,
+    required String language,
+    required CancelToken cancelToken,
+    void Function(double)? onProgress,
+  }) {
+    final result = Completer<TranscriptResult>();
+    results.add(result);
+    progress.add(onProgress);
+    started[results.length - 1].complete();
+    return result.future;
+  }
+
+  @override
+  void dispose() {}
+}
+
 void main() {
   late MockTranscriptionApiClient mockApi;
   late MockTranscriptionFileOps mockFileOps;
@@ -225,6 +261,99 @@ void main() {
 
   tearDown(() async {
     await database.close();
+  });
+
+  group('外部语音回归', () {
+    final transcript = TranscriptResult(
+      sentences: [
+        TranscriptSentence(
+          text: 'Hello',
+          startTime: Duration.zero,
+          endTime: const Duration(milliseconds: 400),
+        ),
+        TranscriptSentence(
+          text: 'world.',
+          startTime: const Duration(milliseconds: 400),
+          endTime: const Duration(seconds: 1),
+        ),
+      ],
+      fullText: 'Hello world.',
+    );
+
+    for (final merge in [false, true]) {
+      test('无登录凭据保存字幕，短句合并开关=$merge', () async {
+        final dir = await Directory.systemTemp.createTemp(
+          'external-transcript-',
+        );
+        addTearDown(() => dir.delete(recursive: true));
+        final file = await File(p.join(dir.path, 'test.wav')).writeAsBytes([0]);
+        final item = _testAudioItem(audioPath: file.path, audioSha256: 'hash');
+        final speech = _ControlledSpeech();
+        final c = _createContainer(
+          mockApi: mockApi,
+          mockFileOps: mockFileOps,
+          database: database,
+          audioItems: [item],
+          externalClient: speech,
+        );
+        addTearDown(c.dispose);
+        await _seedAudioRows(database, [item]);
+        final manager = c.read(transcriptionTaskManagerProvider.notifier);
+        final work = manager.startTranscription(
+          item,
+          'en',
+          accessToken: '',
+          autoMergeShortSentences: merge,
+        );
+        await speech.started[0].future;
+        speech.results[0].complete(transcript);
+        await work;
+        expect(manager.getTaskState(item.id), isA<TranscriptionCompleted>());
+        final rows = await database.select(database.audioItems).get();
+        expect(rows.single.transcriptSrt, contains('Hello'));
+        expect(
+          c.read(audioLibraryProvider).audioItems.single.sentenceCount,
+          merge ? 1 : 2,
+        );
+        verifyZeroInteractions(mockApi);
+      });
+    }
+
+    test('取消后旧进度和结果不能覆盖重试任务', () async {
+      final dir = await Directory.systemTemp.createTemp('external-cancel-');
+      addTearDown(() => dir.delete(recursive: true));
+      final file = await File(p.join(dir.path, 'test.wav')).writeAsBytes([0]);
+      final item = _testAudioItem(audioPath: file.path, audioSha256: 'hash');
+      final speech = _ControlledSpeech();
+      final c = _createContainer(
+        mockApi: mockApi,
+        mockFileOps: mockFileOps,
+        database: database,
+        audioItems: [item],
+        externalClient: speech,
+      );
+      addTearDown(c.dispose);
+      await _seedAudioRows(database, [item]);
+      final manager = c.read(transcriptionTaskManagerProvider.notifier);
+      final old = manager.startTranscription(item, 'en', accessToken: '');
+      await speech.started[0].future;
+      manager.cancelTranscription(item.id);
+      final next = manager.startTranscription(item, 'en', accessToken: '');
+      await speech.started[1].future;
+      speech.progress[1]?.call(.4);
+      final before = manager.getTaskState(item.id);
+      speech.progress[0]?.call(.9);
+      speech.results[0].complete(transcript);
+      await old;
+      expect(manager.getTaskState(item.id), same(before));
+      expect(
+        (await database.select(database.audioItems).get()).single.transcriptSrt,
+        isNull,
+      );
+      speech.results[1].complete(transcript);
+      await next;
+      expect(manager.getTaskState(item.id), isA<TranscriptionCompleted>());
+    });
   });
 
   /// 桩：音频已存在 + 字幕缓存命中（返回「Hello world」），用于直达保存流程。
@@ -1672,7 +1801,7 @@ void main() {
         if (await dataDir.exists()) await dataDir.delete(recursive: true);
       });
       const videoRel = 'audios/imported/orig-sha.mp4';
-      final videoFile = File('${dataDir.path}/$videoRel');
+      final videoFile = File(p.join(dataDir.path, videoRel));
       await videoFile.create(recursive: true);
       await videoFile.writeAsBytes([1, 2, 3]);
 
@@ -1745,7 +1874,7 @@ void main() {
         if (await dataDir.exists()) await dataDir.delete(recursive: true);
       });
       const videoRel = 'audios/imported/video-sha.mp4';
-      final videoFile = File('${dataDir.path}/$videoRel');
+      final videoFile = File(p.join(dataDir.path, videoRel));
       await videoFile.create(recursive: true);
       await videoFile.writeAsBytes([1, 2, 3]);
 
@@ -1887,7 +2016,7 @@ void main() {
         if (await dataDir.exists()) await dataDir.delete(recursive: true);
       });
       const videoRel = 'audios/imported/video-sha.mp4';
-      final videoFile = File('${dataDir.path}/$videoRel');
+      final videoFile = File(p.join(dataDir.path, videoRel));
       await videoFile.create(recursive: true);
       await videoFile.writeAsBytes([1, 2, 3]);
 

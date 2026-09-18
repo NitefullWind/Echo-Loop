@@ -8,7 +8,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:universal_io/io.dart';
 
 import '../config/api_config.dart';
+import '../config/external_services_config.dart';
+import '../models/external_ai_config.dart';
 import '../features/auth/providers/auth_providers.dart';
+import 'external_speech_client_provider.dart';
+import 'external_speech_settings_provider.dart';
+import 'external_ai_settings_provider.dart';
 import '../features/subscription/models/ai_quota_rejection.dart';
 import '../features/subscription/models/premium_feature.dart';
 import '../features/subscription/providers/ai_trial_usage_provider.dart';
@@ -19,6 +24,9 @@ import '../models/retell_review_sample.dart';
 import '../services/app_logger.dart';
 import '../services/retell_review_audio_preparer.dart';
 import '../services/sentence_ai_api_client.dart';
+import '../services/external_retell_evaluator.dart';
+import '../services/external_speech_client.dart';
+import '../services/openai_compatible_ai_client.dart';
 
 const _maxReviewAudioBytes = 2 * 1024 * 1024;
 
@@ -35,6 +43,7 @@ class RetellReviewEvaluationState {
   final RetellReviewEvaluationPhase phase;
   final RetellReviewEvaluation? evaluation;
   final String? errorCode;
+  final String? errorMessage;
   final AiQuotaRejectionReason quotaReason;
 
   const RetellReviewEvaluationState({
@@ -42,6 +51,7 @@ class RetellReviewEvaluationState {
     this.phase = RetellReviewEvaluationPhase.idle,
     this.evaluation,
     this.errorCode,
+    this.errorMessage,
     this.quotaReason = AiQuotaRejectionReason.exhausted,
   });
 
@@ -76,7 +86,18 @@ class RetellReviewEvaluationController
 
   @override
   RetellReviewEvaluationState build() {
-    ref.onDispose(_cancelActiveRequest);
+    ref.onDispose(() {
+      ++_generation;
+      _cancelActiveRequest();
+    });
+    ref.listen(
+      externalAiSettingsProvider,
+      (_, __) => _invalidateConfiguration(),
+    );
+    ref.listen(
+      externalSpeechSettingsProvider,
+      (_, __) => _invalidateConfiguration(),
+    );
     return const RetellReviewEvaluationState();
   }
 
@@ -99,6 +120,25 @@ class RetellReviewEvaluationController
     if (state.hasCachedResult ||
         state.phase == RetellReviewEvaluationPhase.loading ||
         state.phase == RetellReviewEvaluationPhase.streaming) {
+      return;
+    }
+
+    final speechSettings = ref.read(externalSpeechSettingsProvider);
+    final textSettings = ref.read(externalAiSettingsProvider);
+    if (externalServicesOnly ||
+        speechSettings.config.provider != ExternalSpeechProvider.disabled ||
+        speechSettings.isLoading ||
+        speechSettings.loadError != null) {
+      await _evaluateWithExternalServices(
+        attemptKey: attemptKey,
+        recordingPath: recordingPath,
+        originalText: originalText,
+        targetLanguage: targetLanguage,
+        speechReady: speechSettings.isConfigured,
+        textConfig: textSettings.isConfigured
+            ? textSettings.configOrNull
+            : null,
+      );
       return;
     }
 
@@ -208,6 +248,95 @@ class RetellReviewEvaluationController
     }
   }
 
+  /// 使用用户配置的语音与文本模型完成复述评价，绕过官方登录和额度。
+  Future<void> _evaluateWithExternalServices({
+    required String attemptKey,
+    required String recordingPath,
+    required String originalText,
+    required String targetLanguage,
+    required bool speechReady,
+    required ExternalAiConfig? textConfig,
+  }) async {
+    if (!speechReady) {
+      _failFast(attemptKey, 'speech_not_configured');
+      return;
+    }
+    if (textConfig == null) {
+      _failFast(attemptKey, 'text_not_configured');
+      return;
+    }
+    final client = ref.read(externalSpeechClientProvider);
+    if (client == null) {
+      _failFast(attemptKey, 'speech_not_configured');
+      return;
+    }
+    final generation = ++_generation;
+    _cancelActiveRequest();
+    final cancelToken = CancelToken();
+    _cancelToken = cancelToken;
+    state = RetellReviewEvaluationState(
+      attemptKey: attemptKey,
+      phase: RetellReviewEvaluationPhase.loading,
+    );
+    final textClient = OpenAiCompatibleAiClient(textConfig);
+    final evaluator = ExternalRetellEvaluator(
+      transcribe:
+          ({required audioFile, required language, required cancelToken}) =>
+              client.transcribe(
+                audioFile: audioFile,
+                language: language,
+                cancelToken: cancelToken,
+              ),
+      completeJson:
+          ({required systemPrompt, required userPrompt, cancelToken}) =>
+              textClient.completeJson(
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                cancelToken: cancelToken,
+              ),
+    );
+    try {
+      final evaluation = await evaluator.evaluate(
+        audioFile: File(recordingPath),
+        originalText: originalText,
+        targetLanguage: targetLanguage,
+        cancelToken: cancelToken,
+      );
+      if (!_isCurrent(generation, attemptKey)) return;
+      state = RetellReviewEvaluationState(
+        attemptKey: attemptKey,
+        phase: RetellReviewEvaluationPhase.completed,
+        evaluation: evaluation,
+      );
+    } on DioException catch (error) {
+      if (!CancelToken.isCancel(error)) {
+        _setFailure(generation, attemptKey, 'request_failed');
+      }
+    } on ExternalAiResponseException catch (error) {
+      AppLogger.log('RetellReview', '外部评价失败: ${error.message}');
+      _setFailure(
+        generation,
+        attemptKey,
+        'request_failed',
+        errorMessage: error.message,
+      );
+    } on ExternalSpeechException catch (error) {
+      _setFailure(
+        generation,
+        attemptKey,
+        'request_failed',
+        errorMessage: error.message,
+      );
+    } catch (error, stackTrace) {
+      if (cancelToken.isCancelled) return;
+      AppLogger.log('RetellReview', '外部评价失败: $error stack=$stackTrace');
+      _setFailure(generation, attemptKey, 'request_failed');
+    } finally {
+      textClient.dispose();
+      if (identical(_cancelToken, cancelToken)) _cancelToken = null;
+    }
+  }
+
   /// 用调试假数据填充结果，不发请求（见 [retellReviewSampleEnabled]）。
   ///
   /// 同样走 `_generation` 自增并取消在途请求：假数据也要能盖掉上一次真实评估，
@@ -254,6 +383,7 @@ class RetellReviewEvaluationController
     String attemptKey,
     String errorCode, {
     AiQuotaRejectionReason quotaReason = AiQuotaRejectionReason.exhausted,
+    String? errorMessage,
   }) {
     if (!_isCurrent(generation, attemptKey)) return;
     state = RetellReviewEvaluationState(
@@ -261,7 +391,15 @@ class RetellReviewEvaluationController
       phase: RetellReviewEvaluationPhase.failed,
       errorCode: errorCode,
       quotaReason: quotaReason,
+      errorMessage: errorMessage,
     );
+  }
+
+  /// 配置变更立即取消请求并清空当前录音缓存。
+  void _invalidateConfiguration() {
+    ++_generation;
+    _cancelActiveRequest();
+    state = RetellReviewEvaluationState(attemptKey: state.attemptKey);
   }
 
   void _cancelActiveRequest() {

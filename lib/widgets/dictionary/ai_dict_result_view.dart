@@ -6,6 +6,7 @@
 /// 状态：加载中 shimmer、失败重试、需登录、空结果。
 library;
 
+import '../../config/external_services_config.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -216,7 +217,9 @@ class AiDictResultView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            l10n.aiSignInRequired,
+            externalServicesOnly
+                ? l10n.externalAiDescription
+                : l10n.aiSignInRequired,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -224,7 +227,11 @@ class AiDictResultView extends StatelessWidget {
           const SizedBox(height: AppSpacing.s),
           FilledButton.tonal(
             onPressed: onSignIn,
-            child: Text(l10n.authSignInButton),
+            child: Text(
+              externalServicesOnly
+                  ? l10n.externalAiTitle
+                  : l10n.authSignInButton,
+            ),
           ),
         ],
       ),

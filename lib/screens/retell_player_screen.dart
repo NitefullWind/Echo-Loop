@@ -43,6 +43,8 @@ import '../services/app_logger.dart';
 import '../utils/wakelock_mixin.dart';
 import '../router/app_router.dart';
 import 'sentence_detail_screen.dart';
+import 'external_ai_settings_screen.dart';
+import 'external_speech_settings_screen.dart';
 import '../widgets/dialogs/free_play_complete_dialog.dart';
 import '../widgets/dialogs/step_complete_dialog.dart';
 import '../widgets/review/review_briefing_sheet.dart';
@@ -383,7 +385,8 @@ class _RetellPlayerScreenState extends ConsumerState<RetellPlayerScreen>
     if (!mounted || _isExiting) return;
     // 流一有返回就开弹窗：`meta` 首帧（转录）已在 client 层独立成帧，
     // 因此这里的「首个带 evaluation 的帧」就是服务端最早的一次推送。
-    if (next.phase == RetellReviewEvaluationPhase.streaming &&
+    if ((next.phase == RetellReviewEvaluationPhase.streaming ||
+            next.phase == RetellReviewEvaluationPhase.completed) &&
         previous?.evaluation == null &&
         next.evaluation != null) {
       unawaited(_openRetellReviewSheet());
@@ -400,14 +403,37 @@ class _RetellPlayerScreenState extends ConsumerState<RetellPlayerScreen>
           unawaited(_showRetellReviewQuotaDialog());
           return;
       }
-      final message = retellReviewErrorMessage(
-        AppLocalizations.of(context)!,
-        next.errorCode,
-        quotaReason: next.quotaReason,
-      );
+      final message =
+          next.errorMessage ??
+          retellReviewErrorMessage(
+            AppLocalizations.of(context)!,
+            next.errorCode,
+            quotaReason: next.quotaReason,
+          );
       ScaffoldMessenger.of(context)
         ..clearSnackBars()
-        ..showSnackBar(SnackBar(content: Text(message)));
+        ..showSnackBar(
+          SnackBar(
+            content: Text(message),
+            action:
+                (next.errorCode == 'speech_not_configured' ||
+                    next.errorCode == 'text_not_configured')
+                ? SnackBarAction(
+                    label: '设置 / Settings',
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) =>
+                              next.errorCode == 'speech_not_configured'
+                              ? const ExternalSpeechSettingsScreen()
+                              : const ExternalAiSettingsScreen(),
+                        ),
+                      );
+                    },
+                  )
+                : null,
+          ),
+        );
     }
   }
 

@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../../screens/external_ai_settings_screen.dart';
+import '../../screens/external_speech_settings_screen.dart';
 import '../../features/subscription/models/premium_feature.dart';
 import '../../features/subscription/models/ai_quota_rejection.dart';
 import '../../features/subscription/utils/ai_quota_copy.dart';
@@ -26,6 +28,8 @@ String retellReviewErrorMessage(
   String? errorCode, {
   AiQuotaRejectionReason quotaReason = AiQuotaRejectionReason.exhausted,
 }) => switch (errorCode) {
+  'speech_not_configured' => '请先配置外部语音服务。 Configure external speech settings.',
+  'text_not_configured' => '请先配置外部文本 AI。 Configure external AI settings.',
   'audio_preparation_failed' => l10n.retellAiReviewAudioPreparationError,
   'audio_too_large' => l10n.retellAiReviewAudioTooLarge,
   'auth_required' => l10n.retellAiReviewSignInRequiredTitle,
@@ -124,11 +128,13 @@ class _RetellReviewSheet extends ConsumerWidget {
     if (state.phase == RetellReviewEvaluationPhase.failed) {
       return _ReviewFailure(
         errorCode: state.errorCode,
-        message: retellReviewErrorMessage(
-          l10n,
-          state.errorCode,
-          quotaReason: state.quotaReason,
-        ),
+        message:
+            state.errorMessage ??
+            retellReviewErrorMessage(
+              l10n,
+              state.errorCode,
+              quotaReason: state.quotaReason,
+            ),
         onRetry: onRetry,
         onUpgrade: onUpgrade,
         onSignIn: onSignIn,
@@ -300,6 +306,19 @@ class _ReviewFailure extends StatelessWidget {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
     final (actionLabel, actionIcon, onAction) = switch (errorCode) {
+      'speech_not_configured' || 'text_not_configured' => (
+        '设置 / Settings',
+        Icons.settings_rounded,
+        () async {
+          await Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => errorCode == 'speech_not_configured'
+                  ? const ExternalSpeechSettingsScreen()
+                  : const ExternalAiSettingsScreen(),
+            ),
+          );
+        },
+      ),
       'quota_exceeded' => (
         l10n.aiQuotaExceededSubscribe,
         Icons.workspace_premium_rounded,

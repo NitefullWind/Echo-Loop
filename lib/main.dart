@@ -1,3 +1,4 @@
+import 'config/external_services_config.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -138,41 +139,37 @@ void main() async {
   // 至此仅完成了绑定、同步 UI 偏好和数据库对象注册。首帧后的本地与第三方
   // 任务由 ProviderScope 内的标准 Riverpod 启动 provider 编排。
   startupTrace.mark('run_app_invoked');
-  runApp(
-    PostHogWidget(
-      child: ProviderScope(
-        overrides: [
-          packageInfoProvider.overrideWithValue(packageInfo),
-          isFirstLaunchProvider.overrideWithValue(isFirstLaunch),
-          sharedPreferencesProvider.overrideWithValue(prefs),
-          initialOnboardingCompletedProvider.overrideWithValue(
-            onboardingCompleted,
-          ),
-          initialLearningSettingsProvider.overrideWithValue(
-            initialLearningSettings,
-          ),
-          initialTtsSettingsProvider.overrideWithValue(initialTtsSettings),
-          initialIntensiveListenPrefsProvider.overrideWithValue(
-            initialIntensiveListenPrefs,
-          ),
-          initialBlindListenPrefsProvider.overrideWithValue(
-            initialBlindListenPrefs,
-          ),
-          initialRetellPrefsProvider.overrideWithValue(initialRetellPrefs),
-          initialDifficultPracticePrefsProvider.overrideWithValue(
-            initialDifficultPracticePrefs,
-          ),
-          initialUiLocaleProvider.overrideWithValue(initialUiLocale),
-          initialAiTranscriptionAutoMergeEnabledProvider.overrideWithValue(
-            initialAiTranscriptionAutoMergeEnabled,
-          ),
-          initialRemoteConfigProvider.overrideWithValue(initialRemoteConfig),
-          startupDemoModeProvider.overrideWithValue(isDemoMode),
-        ],
-        child: const EchoLoopApp(),
+  final app = ProviderScope(
+    overrides: [
+      packageInfoProvider.overrideWithValue(packageInfo),
+      isFirstLaunchProvider.overrideWithValue(isFirstLaunch),
+      sharedPreferencesProvider.overrideWithValue(prefs),
+      initialOnboardingCompletedProvider.overrideWithValue(onboardingCompleted),
+      initialLearningSettingsProvider.overrideWithValue(
+        initialLearningSettings,
       ),
-    ),
+      initialTtsSettingsProvider.overrideWithValue(initialTtsSettings),
+      initialIntensiveListenPrefsProvider.overrideWithValue(
+        initialIntensiveListenPrefs,
+      ),
+      initialBlindListenPrefsProvider.overrideWithValue(
+        initialBlindListenPrefs,
+      ),
+      initialRetellPrefsProvider.overrideWithValue(initialRetellPrefs),
+      initialDifficultPracticePrefsProvider.overrideWithValue(
+        initialDifficultPracticePrefs,
+      ),
+      initialUiLocaleProvider.overrideWithValue(initialUiLocale),
+      initialAiTranscriptionAutoMergeEnabledProvider.overrideWithValue(
+        initialAiTranscriptionAutoMergeEnabled,
+      ),
+      initialRemoteConfigProvider.overrideWithValue(initialRemoteConfig),
+      startupDemoModeProvider.overrideWithValue(isDemoMode),
+    ],
+    child: const EchoLoopApp(),
   );
+  // 独立版首帧也不挂载官方埋点 SDK。
+  runApp(externalServicesOnly ? app : PostHogWidget(child: app));
 }
 
 class EchoLoopApp extends ConsumerStatefulWidget {
@@ -248,10 +245,7 @@ class _EchoLoopAppState extends ConsumerState<EchoLoopApp>
     final pendingIntent = bridge.takePendingIntent();
     if (pendingIntent != null) _handleNotificationIntent(pendingIntent);
 
-    Future.delayed(
-      const Duration(seconds: 3),
-      _triggerCatalogSync,
-    );
+    Future.delayed(const Duration(seconds: 3), _triggerCatalogSync);
   }
 
   /// 业务内容提交后再预热，不让原生播放器依赖阻塞进入学习页。
@@ -271,7 +265,8 @@ class _EchoLoopAppState extends ConsumerState<EchoLoopApp>
 
   /// 等待后台 SDK 初始化完成后再创建其依赖的订阅与认证控制器。
   Future<void> _startThirdPartyDependentTasks() async {
-    if (!mounted || _didStartThirdPartyEffects) return;
+    // 独立版不恢复官方登录态，也不创建订阅权益控制器。
+    if (externalServicesOnly || !mounted || _didStartThirdPartyEffects) return;
     _didStartThirdPartyEffects = true;
 
     // RevenueCat 与 Supabase 已完成后台串行初始化；先让 session provider
@@ -335,7 +330,8 @@ class _EchoLoopAppState extends ConsumerState<EchoLoopApp>
         // （不再有 RC SDK 客户端缓存兜着），且退款/退订分歧主要靠 E6/E7 在后端
         // 交互时被动收敛，故仅在状态陈旧 / 越过到期点 / 超过 24h 新鲜窗（兜住
         // 长期无后端流量的用户）时才回源，频繁切前台不盲查。
-        if (ref.read(thirdPartyStartupProvider).hasValue) {
+        if (!externalServicesOnly &&
+            ref.read(thirdPartyStartupProvider).hasValue) {
           unawaited(
             ref.read(subscriptionControllerProvider.notifier).refreshIfStale(),
           );
@@ -351,7 +347,7 @@ class _EchoLoopAppState extends ConsumerState<EchoLoopApp>
         // 卡在内存队列里，App 被 OS 挂起 / 杀进程时丢失。
         // PostHog 默认 flushAt=20 / flushInterval=30s，单纯依赖默认策略
         // 在快速切后台场景容易丢。
-        unawaited(Posthog().flush());
+        if (!externalServicesOnly) unawaited(Posthog().flush());
       case AppLifecycleState.inactive:
       case AppLifecycleState.hidden:
       // no-op

@@ -36,6 +36,8 @@ import '../../providers/audio_sentences_provider.dart';
 import '../../providers/learning_settings_provider.dart';
 import '../../providers/sentence_ai_provider.dart';
 import '../../providers/external_ai_settings_provider.dart';
+import '../../config/external_services_config.dart';
+import '../../screens/external_ai_settings_screen.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/saved_sense_group_provider.dart';
 import '../../services/app_logger.dart';
@@ -534,6 +536,10 @@ class _SentenceExplanationViewState
   /// 只在确实需要请求 L3 API 且当前无 Supabase session 时出现；
   /// 已缓存的 L1/L2 结果不会触发登录门槛。
   Future<void> _showAiFeatureSignInDialog() async {
+    if (externalServicesOnly) {
+      await openExternalAiSettings(context);
+      return;
+    }
     final l10n = AppLocalizations.of(context);
     if (l10n == null) return;
     await ensureSignedInForAction(
@@ -990,7 +996,9 @@ class _SentenceExplanationViewState
     // 宿主无需额外传入“启用自动加载”的开关。
     final shouldAutoLoadSentenceAi =
         ref.watch(externalAiSettingsProvider).isConfigured ||
-        (accessToken != null && accessToken.isNotEmpty);
+        (!externalServicesOnly &&
+            accessToken != null &&
+            accessToken.isNotEmpty);
     final willStartAutoLoad =
         shouldAutoLoadSentenceAi &&
         (autoShowAiAnalysis ||

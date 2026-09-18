@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart' show Ref;
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../../config/api_config.dart';
+import '../../../config/external_services_config.dart';
 import '../../auth/providers/auth_providers.dart';
 import '../../../providers/package_info_provider.dart';
 import '../../../providers/external_ai_settings_provider.dart';
@@ -29,6 +30,9 @@ ChatApi chatApiClient(Ref ref) {
     final client = OpenAiCompatibleChatApi(externalConfig);
     ref.onDispose(client.dispose);
     return client;
+  }
+  if (externalServicesOnly) {
+    return UnavailableChatApi('请先在设置中配置外部文本 AI');
   }
   if (kChatbotUseFakeApi) return const FakeChatApiClient();
   final client = ChatApiClient(

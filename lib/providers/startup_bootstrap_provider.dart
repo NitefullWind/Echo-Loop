@@ -23,6 +23,7 @@ import '../analytics/channels/log_only_channel.dart';
 import '../analytics/consent_manager.dart';
 import '../analytics/permission_snapshot.dart';
 import '../config/api_config.dart';
+import '../config/external_services_config.dart';
 import '../config/auth_config.dart' as auth_config;
 import '../config/paddle_config.dart' as paddle_config;
 import '../config/revenuecat_config.dart' as revenuecat_config;
@@ -210,7 +211,7 @@ class DefaultStartupBootstrapper implements StartupBootstrapper {
       initEchoLoopAudioHandler,
     );
 
-    if (!kIsWeb && Platform.isIOS) {
+    if (!externalServicesOnly && !kIsWeb && Platform.isIOS) {
       activeStartupTrace?.mark(
         'detached_scheduled',
         fields: {'step': 'ios_network_permission_trigger'},
@@ -218,58 +219,70 @@ class DefaultStartupBootstrapper implements StartupBootstrapper {
       unawaited(NetworkPermissionTrigger.trigger(_prefs, apiBaseUrl));
     }
 
-    await _runBestEffort(issues, 'firebase_initialize', () {
-      return Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-    });
-
     var supabaseReady = false;
-    String? restoredUserId;
-    if (auth_config.isAuthConfigured) {
-      try {
-        await _trace('supabase_initialize', () {
-          return Supabase.initialize(
-            url: auth_config.supabaseUrl,
-            anonKey: auth_config.supabasePublishableKey,
-          );
-        });
-        supabaseReady = true;
-        restoredUserId = Supabase.instance.client.auth.currentSession?.user.id;
-      } catch (error, stackTrace) {
-        _recordIssue(issues, 'supabase_initialize', error, stackTrace);
+    var revenueCatReady = false;
+    // 独立版不初始化官方账号、计费或远端埋点；本地维护仍继续执行。
+    if (!externalServicesOnly) {
+      await _runBestEffort(issues, 'firebase_initialize', () {
+        return Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+      });
+
+      String? restoredUserId;
+      if (auth_config.isAuthConfigured) {
+        try {
+          await _trace('supabase_initialize', () {
+            return Supabase.initialize(
+              url: auth_config.supabaseUrl,
+              anonKey: auth_config.supabasePublishableKey,
+            );
+          });
+          supabaseReady = true;
+          restoredUserId =
+              Supabase.instance.client.auth.currentSession?.user.id;
+        } catch (error, stackTrace) {
+          _recordIssue(issues, 'supabase_initialize', error, stackTrace);
+        }
+      } else {
+        activeStartupTrace?.mark(
+          'step_skipped',
+          fields: {'step': 'supabase_initialize', 'reason': 'not_configured'},
+        );
       }
+
+      revenueCatReady = await _initializeRevenueCat(issues, restoredUserId);
+
+      AnalyticsService analyticsService = AnalyticsService(
+        channel: LogOnlyChannel(),
+        consent: ConsentManager(_prefs),
+      );
+      try {
+        final userId = await _trace(
+          'user_id_initialize',
+          () => initUserIdService(_prefs),
+        );
+        analyticsService = await _trace(
+          'analytics_initialize',
+          () => initAnalyticsService(_prefs, userId: userId),
+        );
+      } catch (error, stackTrace) {
+        _recordIssue(issues, 'analytics_initialize', error, stackTrace);
+      }
+      initAnalytics(analyticsService);
+
+      await _runBestEffort(issues, 'permission_snapshot_report', () async {
+        final snapshot = await PermissionSnapshot.capture(_prefs);
+        await analyticsService.reportPermissionSnapshot(snapshot, _prefs);
+      });
     } else {
-      activeStartupTrace?.mark(
-        'step_skipped',
-        fields: {'step': 'supabase_initialize', 'reason': 'not_configured'},
+      initAnalytics(
+        AnalyticsService(
+          channel: LogOnlyChannel(),
+          consent: ConsentManager(_prefs),
+        ),
       );
     }
-
-    final revenueCatReady = await _initializeRevenueCat(issues, restoredUserId);
-
-    AnalyticsService analyticsService = AnalyticsService(
-      channel: LogOnlyChannel(),
-      consent: ConsentManager(_prefs),
-    );
-    try {
-      final userId = await _trace(
-        'user_id_initialize',
-        () => initUserIdService(_prefs),
-      );
-      analyticsService = await _trace(
-        'analytics_initialize',
-        () => initAnalyticsService(_prefs, userId: userId),
-      );
-    } catch (error, stackTrace) {
-      _recordIssue(issues, 'analytics_initialize', error, stackTrace);
-    }
-    initAnalytics(analyticsService);
-
-    await _runBestEffort(issues, 'permission_snapshot_report', () async {
-      final snapshot = await PermissionSnapshot.capture(_prefs);
-      await analyticsService.reportPermissionSnapshot(snapshot, _prefs);
-    });
 
     _scheduleMaintenance();
     activeStartupTrace?.mark(

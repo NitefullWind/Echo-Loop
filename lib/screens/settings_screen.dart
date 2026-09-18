@@ -19,6 +19,7 @@ import '../providers/dev_version_override_provider.dart';
 import '../providers/developer_options_provider.dart';
 import '../providers/offline_asr_settings_provider.dart';
 import '../providers/external_ai_settings_provider.dart';
+import '../providers/external_speech_settings_provider.dart';
 import '../providers/tts/tts_settings_provider.dart';
 import '../services/tts/tts_engine.dart';
 import '../providers/package_info_provider.dart';
@@ -33,6 +34,7 @@ import '../providers/tag_provider.dart';
 import '../analytics/analytics_providers.dart';
 import '../analytics/models/event_names.dart';
 import '../config/app_store_config.dart';
+import '../config/external_services_config.dart';
 import '../features/auth/providers/auth_providers.dart';
 import '../features/auth/screens/account_screen.dart';
 import '../features/subscription/providers/subscription_availability.dart';
@@ -65,6 +67,7 @@ import 'preferences_viewer_screen.dart';
 import 'storage_browser_screen.dart';
 import 'reminder_settings_screen.dart';
 import 'external_ai_settings_screen.dart';
+import 'external_speech_settings_screen.dart';
 import '../config/api_config.dart';
 import '../widgets/app_update_dialog.dart';
 
@@ -98,8 +101,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(AppSpacing.m),
         children: [
-          _buildAccountSection(context, l10n),
-          const SizedBox(height: AppSpacing.m),
+          if (!externalServicesOnly) ...[
+            _buildAccountSection(context, l10n),
+            const SizedBox(height: AppSpacing.m),
+          ],
           _buildSection(
             context,
             title: l10n.appearance,
@@ -405,6 +410,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
         ),
         ListTile(
+          leading: const Icon(Icons.mic_none_outlined),
+          title: const Text('外部语音服务'),
+          subtitle: Text(
+            _externalSpeechSummary(ref.watch(externalSpeechSettingsProvider)),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const ExternalSpeechSettingsScreen(),
+            ),
+          ),
+        ),
+        ListTile(
           leading: const Icon(Icons.auto_awesome),
           title: Text(l10n.externalAiTitle),
           subtitle: Text(
@@ -423,6 +443,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  String _externalSpeechSummary(ExternalSpeechSettings settings) {
+    if (settings.isLoading) return '…';
+    if (settings.loadError != null) return '读取失败';
+    return switch (settings.config.provider) {
+      ExternalSpeechProvider.disabled => '未配置',
+      ExternalSpeechProvider.aliyun =>
+        '阿里百炼 · ${settings.config.resolvedModel}',
+      ExternalSpeechProvider.doubao => '豆包 · ${settings.config.resolvedModel}',
+    };
+  }
+
   /// 服务摘要使用当前界面语言，并显式区分加载和读取失败。
   String _externalAiSummary(
     AppLocalizations l10n,
@@ -430,6 +461,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   ) {
     if (settings.isLoading) return '…';
     if (settings.loadError != null) return l10n.externalAiLoadFailed;
+    if (externalServicesOnly &&
+        settings.provider == ExternalAiProvider.echoLoop) {
+      return Localizations.localeOf(context).languageCode == 'zh'
+          ? '未配置'
+          : 'Not configured';
+    }
     final label = settings.provider == ExternalAiProvider.custom
         ? l10n.externalAiCustom
         : settings.provider.label;
@@ -603,7 +640,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     WidgetRef ref,
     AppLocalizations l10n,
   ) {
-    final updateState = ref.watch(appUpdateProvider);
+    final updateState = externalServicesOnly
+        ? const AppUpdateInitial()
+        : ref.watch(appUpdateProvider);
     final isChecking = updateState is AppUpdateChecking;
 
     return _buildSection(
@@ -655,7 +694,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.chevron_right),
-          onTap: isChecking ? null : () => _checkForUpdate(context, ref, l10n),
+          onTap: externalServicesOnly
+              ? () => launchUrl(
+                  Uri.parse(
+                    'https://github.com/NitefullWind/Echo-Loop/actions/workflows/fork-android.yml',
+                  ),
+                  mode: LaunchMode.externalApplication,
+                )
+              : isChecking
+              ? null
+              : () => _checkForUpdate(context, ref, l10n),
         ),
         ListTile(
           leading: _settingsSvgIcon('assets/icon/documents.svg'),

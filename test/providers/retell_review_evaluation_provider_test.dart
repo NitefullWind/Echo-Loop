@@ -2,6 +2,8 @@
 library;
 
 import 'package:dio/dio.dart';
+import 'package:echo_loop/providers/external_ai_settings_provider.dart';
+import 'package:echo_loop/providers/external_speech_settings_provider.dart';
 import 'package:echo_loop/features/auth/providers/auth_providers.dart';
 import 'package:echo_loop/features/subscription/models/entitlement.dart';
 import 'package:echo_loop/features/subscription/models/ai_quota_rejection.dart';
@@ -105,6 +107,16 @@ DioException _httpError(int status, {Object? data}) => DioException(
   type: DioExceptionType.badResponse,
 );
 
+class _TextSettings extends ExternalAiSettingsController {
+  @override
+  ExternalAiSettings build() => const ExternalAiSettings();
+}
+
+class _SpeechSettings extends ExternalSpeechSettingsController {
+  @override
+  ExternalSpeechSettings build() => const ExternalSpeechSettings();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -140,6 +152,8 @@ void main() {
   }) async {
     final container = ProviderContainer(
       overrides: [
+        externalAiSettingsProvider.overrideWith(_TextSettings.new),
+        externalSpeechSettingsProvider.overrideWith(_SpeechSettings.new),
         sentenceAiApiClientProvider.overrideWithValue(api),
         retellReviewAudioPreparerProvider.overrideWithValue(preparer),
         isAuthenticatedProvider.overrideWithValue(authenticated),

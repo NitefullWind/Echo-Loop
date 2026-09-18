@@ -19,6 +19,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../features/subscription/services/revenuecat_purchase_service.dart'
     show purchaseServiceProvider;
 import '../models/app_update_info.dart';
+import '../config/external_services_config.dart';
 import '../services/app_logger.dart';
 import '../services/app_update_checker.dart';
 import '../services/refresh_coordinator.dart';
@@ -49,6 +50,8 @@ class AppUpdate extends _$AppUpdate {
 
   @override
   AppUpdateState build() {
+    // 个人版本由个人发布渠道更新，不创建官方检查器及商店依赖。
+    if (externalServicesOnly) return const AppUpdateInitial();
     // bundleId 仅 iOS 路径使用（Lookup API），其他平台忽略
     final bundleId = ref.read(packageInfoProvider).packageName;
     _checker = AppUpdateChecker(bundleId: bundleId);
@@ -66,6 +69,7 @@ class AppUpdate extends _$AppUpdate {
   /// 避免设置页 spinner 闪烁；所有异常静默回退为 [AppUpdateResult.none]。
   /// 手动检查进行中时让位，结果不覆盖手动检查的 state。
   Future<void> checkInBackground() async {
+    if (externalServicesOnly) return;
     if (_backgroundChecking) {
       AppLogger.log(_logTag, 'checkInBackground skipped: already running');
       return;
@@ -124,6 +128,9 @@ class AppUpdate extends _$AppUpdate {
   /// 返回检查结果，不更新 provider state，
   /// 避免 MainShell listener 重复弹窗。
   Future<AppUpdateResult> manualCheck() async {
+    if (externalServicesOnly) {
+      return const AppUpdateResult(type: AppUpdateType.none);
+    }
     AppLogger.log(_logTag, 'manualCheck start');
     state = const AppUpdateChecking();
 
