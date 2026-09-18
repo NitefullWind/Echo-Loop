@@ -4,6 +4,8 @@
 
 ## 最近完成
 
+- [x] 在 NitefullWind/Echo-Loop fork 提交外部 AI 改动，配置 `external-ai` 分支推送触发的 Android APK Actions；固定个人签名，支持与官方版共存和后续覆盖升级。首次云端分析、249 项测试及 ARM64 release APK 构建成功，已下载并核对 SHA-256。构建记录：[35301353686](https://github.com/NitefullWind/Echo-Loop/actions/runs/35301353686)。**完成时间**: 2026-09-18
+
 - [x] 支持配置 OpenAI-compatible 外部 AI（OpenAI、DeepSeek、自定义 Base URL），覆盖翻译、解析、意群、AI 词典和聊天；Key 使用系统安全存储，服务切换取消旧请求并隔离缓存。相关静态分析通过，440 项测试通过；额外 Windows 播放回归的 27 项失败与未修改版本一致。使用说明见 [外部 AI](docs/external-ai.md)。**完成时间**: 2026-09-18
 
 - [x] 修复随心听视频页退出后仍继续播放：由页面 owner 在 dispose 生命周期统一释放 MediaPlayback/MediaEngine，保持与音频随心听一致。**完成时间**: 2026-09-01
@@ -160,7 +162,6 @@
 
 ## 后端与发布
 
-- [ ] 在 NitefullWind/Echo-Loop fork 提交外部 AI 改动，配置独立 Android APK Actions 流程并验证首次云端构建。
 - [ ] 后端 OAuth 会话（后端仓库实现；当前 Flutter 仓库不伪造生产后端）。
 - [ ] 跨平台验证与发布准备。
 

@@ -27,3 +27,15 @@ GitHub 仓库 Secret `FORK_ANDROID_KEYSTORE_BASE64` 保存个人签名文件。�
 3. 解压 ZIP，安装 APK；同目录的 `SHA256SUMS.txt` 可校验文件完整性。
 
 Artifact 保留 30 天，下载时需要登录 GitHub。过期后可以重新运行 workflow；运行编号作为 Android versionCode，后续新运行自动递增。该流程不会上传应用商店或自动发布上游版本。
+
+## 首次构建验证（2026-09-18）
+
+- 源码提交：`811e5c4fa84e93090c4118a0c7240b8e06de02e9`。
+- [构建 #1](https://github.com/NitefullWind/Echo-Loop/actions/runs/35301353686)：成功。
+- 全库静态分析无 error；34 条既有 warning/info 位于本次未改动的文件，沿用上游 CI 的非致命提示规则。
+- 云端 249 项外部 AI 和原有文本学习流程测试全部通过。
+- `flutter build apk --release --flavor=dev --target-platform android-arm64` 成功。
+- [下载 APK Artifact](https://github.com/NitefullWind/Echo-Loop/actions/runs/35301353686/artifacts/10530208925)：解压后 APK 为 112,733,207 字节；已下载本地副本并与随包 `SHA256SUMS.txt` 比对一致。
+- 工作流经 actionlint 校验，`git diff --check` 通过。本次未重跑 `scripts/check.sh`，该脚本包含 macOS 专属构建；以实际 Ubuntu Actions 分析、测试和 Android 构建为验证依据。
+
+本地安装包：`build/personal-download/35301353686/Echo-Loop-External-AI-1-arm64.apk`。尚未在实体 Android 设备上安装联调，真实模型调用需要安装后填写自己的 Key。

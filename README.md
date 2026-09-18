@@ -2,6 +2,8 @@
   <a href="./README.en.md">English</a> | <strong>简体中文</strong>
 </div>
 
+> **个人外部 AI 版本（NitefullWind）**：支持在应用内配置 OpenAI、DeepSeek 或自定义兼容模型，用于翻译、解析、意群、词典和聊天。Android 安装包请到 [个人构建 Actions](https://github.com/NitefullWind/Echo-Loop/actions/workflows/fork-android.yml) 下载成功记录中的 Artifact。安装后名为 **Echo Loop Dev**，可与官方版共存。[配置说明](docs/external-ai.md) · [自动打包说明](docs/fork-android-build.md)
+
 <div align="center">
   <img src="assets/icon/app-icon-1024-rounded.png" alt="Echo Loop" width="128" />
 

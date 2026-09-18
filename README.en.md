@@ -2,6 +2,8 @@
   <strong>English</strong> | <a href="./README.md">简体中文</a>
 </div>
 
+> **Personal external AI fork (NitefullWind):** Configure OpenAI, DeepSeek, or a compatible provider in the app for translation, analysis, sense groups, dictionary lookups, and chat. Download the Android APK artifact from a successful [personal build](https://github.com/NitefullWind/Echo-Loop/actions/workflows/fork-android.yml). It installs as **Echo Loop Dev** alongside the official app. [Configuration guide](docs/external-ai.md) · [Build guide](docs/fork-android-build.md)
+
 <div align="center">
   <img src="assets/icon/app-icon-1024-rounded.png" alt="Echo Loop" width="128" />
 
